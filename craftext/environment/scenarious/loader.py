@@ -9,35 +9,12 @@ from dataclasses import dataclass
 import pathlib
 import inspect
 import flax
-from typing import Any, Dict, Iterable, Mapping, Optional, Type
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, Type
 
 import logging
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR_NAME = "configs"
-
-DATASET_KEY_ALIASES: Dict[str, str] = {
-    # Legacy keys from pre-refactor flat dataset layout.
-    "conditional_achivments": "conditional_achievements",
-    "build_squere": "building.squere",
-    "build_star": "building.star",
-    "jax_build": "all_building",
-    "jax_conditional_achievements": "conditional_achievements",
-    "jax_conditional_placing": "conditional_placing",
-    "jax_explore": "explore",
-    "jax_localization_place": "localization_place",
-    "SMALL": "all",
-    "achievements_wood": "achievements.wood",
-}
-
-TEST_SUBSET_SUFFIXES = (
-    "_test_other_params",
-    "_test_other_paramets",
-    "_test_paraphrases",
-    "_test_paraphrased",
-    "_test_parafrases",
-    "_test_parafrased",
-)
 
 
 @flax.struct.dataclass
@@ -291,34 +268,25 @@ def get_default_scenario_path(dataset_package: str = "craftext"):
 
 
 def _candidate_dataset_modules(dataset_key: str) -> Iterable[str]:
-    alias = DATASET_KEY_ALIASES.get(dataset_key)
-    if alias:
-        yield alias
-
-    yield dataset_key
-
+    # Support both naming styles without hardcoding concrete task keys:
+    # - underscore style: building_line
+    # - dotted package style: building.line
+    candidates = [dataset_key]
     if "_" in dataset_key:
-        yield dataset_key.replace("_", ".")
+        candidates.append(dataset_key.replace("_", "."))
+    if "." in dataset_key:
+        candidates.append(dataset_key.replace(".", "_"))
 
-    if alias and "_" in alias:
-        yield alias.replace("_", ".")
+    seen = set()
+    for name in candidates:
+        if name not in seen:
+            seen.add(name)
+            yield name
 
 
 def _resolve_subset_key(module: Any, data_key: str) -> str:
     if hasattr(module, data_key):
         return data_key
-
-    for suffix in TEST_SUBSET_SUFFIXES:
-        if data_key.endswith(suffix):
-            fallback = data_key[: -len(suffix)]
-            if hasattr(module, fallback):
-                logger.warning(
-                    "Subset key '%s' is not present in %s. Falling back to '%s'.",
-                    data_key,
-                    module.__name__,
-                    fallback,
-                )
-                return fallback
 
     raise AttributeError(
         f"Scenario module {module.__name__} has no key '{data_key}'."
@@ -337,7 +305,7 @@ def _import_scenario_module(dataset_package: str, dataset_key: str, test: bool) 
         try:
             return module_name, importlib.import_module(module_name)
         except ModuleNotFoundError as exc:
-            if exc.name != module_name:
+            if not module_name.startswith(exc.name):
                 raise
             attempted.append(module_name)
 

@@ -3,7 +3,7 @@ from craftext.environment.scenarious.checkers.target_state import Achievements, 
 from craftext.environment.craftext_constants import Achievement, Scenarios, AchievementState
 
 def create_target_state(required=[], forbidden=[]):
-    base_vector = [AchievementState.NOT_MATTER for i in range(Achievement.MAKE_IRON_SWORD.value + 1)]
+    base_vector = [AchievementState.NOT_MATTER.value for i in range(Achievement.MAKE_IRON_SWORD.value + 1)]
     for i in range(len(base_vector)):
         if i in required:
             base_vector[i] = AchievementState.NEED_TO_ACHIEVE.value

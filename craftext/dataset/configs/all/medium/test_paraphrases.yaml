@@ -1,6 +1,5 @@
-dataset_key: SMALL
-subset_key: medium_test_parafrased
+dataset_key: all
+subset_key: medium
 base_environment: Craftax-Pixels-v1-Text
-use_parafrases: True
-test: True
-
+use_parafrases: true
+test: true

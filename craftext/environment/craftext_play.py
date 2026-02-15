@@ -154,7 +154,7 @@ if __name__ == "__main__":
     scenario_handler = JaxScenarioDataHandler(
         scenario_processor=RawProcessor, 
         instruction_transformer=DefaultInstructionTransformer,
-        config_name='building_easy_build_line',
+        config_name='building/easy/line',
         jax_representation_class=DefaultJAXRepresentation
     )
     

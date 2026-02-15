@@ -1,4 +1,4 @@
 dataset_key: achievements_wood
 subset_key: one
 base_environment: Craftax-Classic-Pixels-v1-Text
-use_parafrases: False
+use_parafrases: false

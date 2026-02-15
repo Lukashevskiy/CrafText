@@ -1,5 +1,4 @@
-dataset_key: build_star
+dataset_key: building_star
 subset_key: easy
 base_environment: Craftax-Classic-Pixels-v1-Text
-use_parafrases: True
-
+use_parafrases: true

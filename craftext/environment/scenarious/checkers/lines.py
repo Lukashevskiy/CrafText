@@ -1,12 +1,12 @@
 import jax
 import jax.numpy as jnp
-from typing import Tuple
+from typing import Any, Tuple
 
-def check_line_2(center: Tuple[int, int], region: jax.Array, check_diagonal: bool = False, stone_index: int = 0):
+def check_line_2(center: Tuple[int, int], region: jax.Array, check_diagonal: bool = False, stone_index: int = 0) -> jax.Array:
 
     i, j = center
 
-    def check_diagonal_lines(_):
+    def check_diagonal_lines(_: Any) -> jax.Array:
         diagonal_1 = jnp.array([
             region[i, j],
             region[i + 1, j + 1]
@@ -19,7 +19,7 @@ def check_line_2(center: Tuple[int, int], region: jax.Array, check_diagonal: boo
         return (jnp.sum(region) == 3) & jnp.all(diagonal_1 == stone_index) | \
                (jnp.sum(region) == 3) & jnp.all(diagonal_2 == stone_index)
 
-    def check_straight_lines(_):
+    def check_straight_lines(_: Any) -> jax.Array:
         vertical = jnp.array([
             region[i, j],
             region[i + 1, j]
@@ -35,11 +35,11 @@ def check_line_2(center: Tuple[int, int], region: jax.Array, check_diagonal: boo
     return jax.lax.cond(check_diagonal, check_diagonal_lines, check_straight_lines, None)
 
 
-def check_line_3(center: Tuple[int, int], region: jax.Array, check_diagonal: bool = False, stone_index: int = 0):
+def check_line_3(center: Tuple[int, int], region: jax.Array, check_diagonal: bool = False, stone_index: int = 0) -> jax.Array:
 
     i, j = center
 
-    def check_diagonal_lines(_):
+    def check_diagonal_lines(_: Any) -> jax.Array:
         diagonal_1 = jnp.array([
             region[i, j],
             region[i + 1, j + 1],
@@ -54,7 +54,7 @@ def check_line_3(center: Tuple[int, int], region: jax.Array, check_diagonal: boo
         return (jnp.sum(region) == 3) & jnp.all(diagonal_1 == 1) | \
                (jnp.sum(region) == 3) & jnp.all(diagonal_2 == 1)
 
-    def check_straight_lines(_):
+    def check_straight_lines(_: Any) -> jax.Array:
         vertical = jnp.array([
             region[i, j],
             region[i + 1, j],
@@ -72,11 +72,11 @@ def check_line_3(center: Tuple[int, int], region: jax.Array, check_diagonal: boo
     return jax.lax.cond(check_diagonal, check_diagonal_lines, check_straight_lines, None)
 
 
-def check_line_4(center: Tuple[int, int], region: jax.Array, check_diagonal=False, stone_index: int = 0):
+def check_line_4(center: Tuple[int, int], region: jax.Array, check_diagonal: bool = False, stone_index: int = 0) -> jax.Array:
 
     i, j = center
 
-    def check_diagonal_lines(_):
+    def check_diagonal_lines(_: Any) -> jax.Array:
         diagonal_1 = jnp.array([
             region[i, j],
             region[i + 1, j + 1],
@@ -93,7 +93,7 @@ def check_line_4(center: Tuple[int, int], region: jax.Array, check_diagonal=Fals
         return (jnp.sum(region) == 4) & jnp.all(diagonal_1 == 1) | \
                (jnp.sum(region) == 4) & jnp.all(diagonal_2 == 1)
 
-    def check_straight_lines(_):
+    def check_straight_lines(_: Any) -> jax.Array:
         vertical = jnp.array([
             region[i, j],
             region[i + 1, j],

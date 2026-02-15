@@ -7,7 +7,6 @@ from functools import partial
 def safe_dynamic_slice(game_map, x, y, radius, max_radius):
     full_region_size = 2 * max_radius + 1
 
-
     x_padded = x + max_radius
     y_padded = y + max_radius
 

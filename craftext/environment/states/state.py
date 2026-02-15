@@ -1,3 +1,5 @@
+"""State dataclasses and extraction helpers for full Craftax state mode."""
+
 from typing import List
 import jax.numpy as jnp
 from flax import struct
@@ -13,7 +15,7 @@ class PlayerVariables:
     # player_drink: int 
     # player_energy: int 
     # player_mana: int
-    # is_sleeping: bool 
+    is_sleeping: bool 
     # is_resting: bool 
     # player_recover: float 
     # player_hunger: float 
@@ -160,7 +162,7 @@ class PlayerState:
 
 @struct.dataclass
 class GameData:
-    states: list[PlayerState]
+    states: List[PlayerState]
 
     @classmethod
     def from_state(cls, previos_state: PlayerState, current_state: PlayerState, action):

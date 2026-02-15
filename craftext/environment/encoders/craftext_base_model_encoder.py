@@ -1,3 +1,5 @@
+"""Abstract encoding interfaces and enum modes for instruction encoders."""
+
 import os
 from enum import Enum
 from abc import ABC, abstractmethod
@@ -7,14 +9,11 @@ os.environ['HF_HOME'] = "."
 
 
 class EncodeForm(Enum):
-    """
-    Enum representing different forms of encoding.
-    """
-    TOKEN = "token" # Tokenized form of the instruction
-    EMBED_CONCAT_ALL = "embed_concat_all"  # Concatenated embeddings of all tokens
-    EMBED_CONCAT_NO_STOPWORDS = "embed_concat_no_stopwords"  # CLS embeddings of all tokens excluding stopwords
-    EMBED_CLS_FOR_SPLITS = "embed_cls_for_splits"  # CLS embeddings for each split
-    EMBEDDING = "default" # Default embedding form, typically CLS embeddings
+    TOKEN = "token"
+    EMBED_CONCAT_ALL = "embed_concat_all"  # Конкатенация всех векторов токенов
+    EMBED_CONCAT_NO_STOPWORDS = "embed_concat_no_stopwords"  # Конкатенация всех векторов без предлогов
+    EMBED_CLS_FOR_SPLITS = "embed_cls_for_splits"  # CLS-векторы для разбиения на части
+    EMBEDDING = "default"
 
 class EncodeModel(ABC):
     def __init__(self, form_to_use=EncodeForm.EMBEDDING):
@@ -46,5 +45,4 @@ class EncodeModel(ABC):
         Must be implemented in a concrete class.
         """
         pass
-
 

@@ -21,6 +21,9 @@ def checker_star(game_data: Union[GameDataClassic, GameData],  target_state: Bui
     size = target_state.size
     cross_type = target_state.cross_type
 
+    # return jax.lax.select(target_state.need_to_achieve, 
+                #    is_cross_formed(10, 7, game_data, block_index, radius, size, cross_type),
+                #    jnp.array(False))
     return is_cross_formed(10, 7, game_data, block_index, radius, size, cross_type)
 
 @partial(jax.jit, static_argnums=(0,1))
@@ -34,88 +37,59 @@ def is_cross_formed(
     size:        int     
 ):
 
-    """
-    Detects whether a cross of a given size and type is formed around the player.
-    """
-
-    #Extract player position
     x, y = game_data.states[0].variables.player_position
-
-    #Define region parameters
-    R = max_radius                  # maximum allowed radius
-    FULL = 2 * R + 1                # full side length of padded region
-
-    # Pad the full game map to safely slice around edges
+    R   = max_radius
+    FULL = 2*R + 1
     padded = jnp.pad(
         game_data.states[0].map.game_map,
         ((R, R), (R, R)),
-        constant_values=-1          # out‐of‐bounds marker
+        constant_values=-1
     )
+    region_full = lax.dynamic_slice(padded, (x, y), (FULL, FULL))  
 
-    # Slice out the full square region centered on the player
-    region_full = lax.dynamic_slice(
-        padded,
-        (x, y),
-        (FULL, FULL)
-    )  # shape [FULL, FULL]
-
-    # Build a boolean mask for the “search radius” within that region
-    coords = jnp.arange(-R, R + 1)               # coordinates relative to center
-    mask1d = jnp.abs(coords) <= radius           # which offsets are within the actual radius
-    mask2d = mask1d[:, None] & mask1d[None, :]   # 2D circular (square) mask
-    # apply mask: out‐of‐radius cells get -1
+    coords = jnp.arange(-R, R+1)                         
+    mask1d = jnp.abs(coords) <= radius                   
+    mask2d = mask1d[:, None] & mask1d[None, :]           
     region = jnp.where(mask2d, region_full, -1)
 
-    # Create a 4D tensor for convolution: shape [batch=1, chan_in=1, H, W]
     B = (region == block_index).astype(jnp.float32)[None, None, ...]
 
-    # Prepare filters for horizontal, vertical, and two diagonal lines
-    S = max_size        # maximum filter side length
-    C = S // 2          # center index in filter
+    S = max_size
+    C = S // 2  
 
-    idxs = jnp.arange(S)
-    half = size // 2
-    start = C - half
-    end = start + size
-    mask_range = (idxs >= start) & (idxs < end)  # which rows/cols fall inside the desired size
+    idxs = jnp.arange(S)  
 
-    row_idx = idxs[:, None]
-    col_idx = idxs[None, :]
+    half = size // 2      
+    start = C - half      
+    end   = start + size  
 
-    # horizontal line filter at center row
-    filt_h  = (row_idx == C) & mask_range[None, :]
-    # vertical line filter at center column
-    filt_v  = (col_idx == C) & mask_range[:, None]
-    # main diagonal filter
+    mask_range = (idxs >= start) & (idxs < end) 
+
+    row_idx = idxs[:, None]      
+    col_idx = idxs[None, :]      
+    filt_h = (row_idx == C) & mask_range[None, :]  
+    filt_v = (col_idx == C) & mask_range[:, None]  
     filt_d1 = (row_idx == col_idx) & mask_range[:, None] & mask_range[None, :]
-    # anti-diagonal filter
-    filt_d2 = (row_idx + col_idx == 2 * C) & mask_range[:, None] & mask_range[None, :]
+    filt_d2 = (row_idx + col_idx == 2*C) & mask_range[:, None] & mask_range[None, :]
 
-    # convert boolean filters to float32 and add batch/channel dims
-    kh  = filt_h.astype(jnp.float32)[None, None, ...]
-    kv  = filt_v.astype(jnp.float32)[None, None, ...]
-    kd1 = filt_d1.astype(jnp.float32)[None, None, ...]
-    kd2 = filt_d2.astype(jnp.float32)[None, None, ...]
+    kh = filt_h.astype(jnp.float32)
+    kv = filt_v.astype(jnp.float32)
+    kd1 = filt_d1.astype(jnp.float32)
+    kd2 = filt_d2.astype(jnp.float32)
 
-    # Helper partial for 2D convolution with VALID padding, NCHW layout
-    conv = partial(
-        lax.conv_general_dilated,
-        window_strides=(1, 1),
-        padding="VALID",
-        dimension_numbers=("NCHW", "OIHW", "NCHW")
-    )
+    conv = partial(lax.conv_general_dilated,
+                   window_strides=(1,1),
+                   padding="VALID",
+                   dimension_numbers=("NCHW","OIHW","NCHW"))
 
-    # Convolve the region tensor with each filter
-    h_out  = conv(B, kh)[0, 0]   # horizontal sum at each center
-    v_out  = conv(B, kv)[0, 0]   # vertical sum
-    d1_out = conv(B, kd1)[0, 0]  # main diagonal sum
-    d2_out = conv(B, kd2)[0, 0]  # anti-diagonal sum
+    h_out  = conv(B, kh [None, None])[0,0]  
+    v_out  = conv(B, kv [None, None])[0,0]
+    d1_out = conv(B, kd1[None, None])[0,0]
+    d2_out = conv(B, kd2[None, None])[0,0]
 
-    # Determine which lines are fully filled (sum == size)
-    straight = (h_out == size) & (v_out == size)
+    straight = (h_out  == size) & (v_out  == size)
     diagonal = (d1_out == size) & (d2_out == size)
 
-    # Select based on cross_type: 0=straight only, 1=diagonal only, else either
     mask = lax.cond(
         cross_type == 0,
         lambda _: straight,
@@ -128,6 +102,5 @@ def is_cross_formed(
         operand=None
     )
 
-    # Return True if any center yields a valid cross
     return jnp.any(mask)
 

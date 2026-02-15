@@ -1,18 +1,20 @@
+"""Domain constants and typed enums used across CrafText scenarios."""
+
 from enum import Enum
 import os
 from flax import struct
 
+
+
 base_path = os.getenv("CRAFTEXT_SCENARIO_PATH", "../dataset/scenarious")
 plans_path = os.path.join(base_path, "extra_files", "easy_gpt4_action_plans.json")
 
-@struct.dataclass
-class AchievementState:
+class AchievementState(Enum):
     NOT_MATTER = 0
     NEED_TO_ACHIEVE = 1
     AVOID_TO_ACHIEVE = -1
     
-@struct.dataclass
-class Scenarios:
+class Scenarios(Enum):
     CONDITIONAL_ACHIEVEMENTS = 0
     CONDITIONAL_PLACING = 1
     LOCALIZATION_PLACE = 2
@@ -24,8 +26,7 @@ class Scenarios:
     TIME_CONSTRAINED_PLACEMENT = 6
     EXPLORE = 7
     
-@struct.dataclass    
-class MediumInventoryItems:
+class MediumInventoryItems(Enum):
     WOOD = 0
     STONE = 1
     COAL = 2
@@ -43,8 +44,7 @@ class MediumInventoryItems:
     POTIONS = 14
     BOOKS = 15
 
-@struct.dataclass
-class Achievement:
+class Achievement(Enum):
     COLLECT_WOOD = 0
     PLACE_TABLE = 1
     EAT_COW = 2
@@ -123,8 +123,7 @@ class Achievement:
     SMTH = 65
     END = 66
 
-@struct.dataclass
-class InventoryItems:
+class InventoryItems(Enum):
     WOOD = 0
     STONE = 1
     COAL = 2
@@ -139,8 +138,7 @@ class InventoryItems:
     IRON_SWORD = 11
  
 
-@struct.dataclass
-class BlockType:
+class BlockType(Enum):
     INVALID = 0
     OUT_OF_BOUNDS = 1
     GRASS = 2
@@ -179,16 +177,21 @@ class BlockType:
     GRAVE3 = 35
     NECROMANCER_VULNERABLE = 36
     
-@struct.dataclass
-class TimeState:
+class TimeState(Enum):
     NIGHT = 0
     MORNING = 1
     EVENING = 2
     DAY = 3
 
-
-@struct.dataclass
-class CrossType:
+class CrossType(Enum):
     STRAIGHT = 0
     DIAGONAL = 1
     COMBINED = 2
+    
+
+
+class MobType(Enum):
+    ZOMBIE = 0
+    SKELETON = 1
+    ALL = 2
+    

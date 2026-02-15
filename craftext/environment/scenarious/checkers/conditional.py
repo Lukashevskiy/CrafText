@@ -22,31 +22,16 @@ def checker_conditional_placement(game_data: Union[GameDataClassic, GameData],  
 
 def conditional_placing(gd: Union[GameDataClassic, GameData], object_inventory_enum: int, object_to_place: int, count_to_collect: int, count_to_stand: int) -> jax.Array:
 
-    # Extract previous and current states
     previous_state = gd.states[0]
     current_state = gd.states[1]
     
-    # Check inventory before and after
-    prev_ok = check_inventory(previous_state.inventory,
-                              object_inventory_enum,
-                              count_to_collect)
-    curr_ok = check_inventory(current_state.inventory,
-                              object_inventory_enum,
-                              count_to_collect)
+    prev_inventory_check = check_inventory(previous_state.inventory, object_inventory_enum, count_to_collect)
     
-    # Check how many objects are now standing on the map
-    placed_ok = check_map(current_state.map.game_map,
-                          object_to_place,
-                          count_to_stand)
+    curr_inventory_check = check_inventory(current_state.inventory, object_inventory_enum, count_to_collect)
     
-    # True if item was collected (prev False, curr True) and then placed
-    return jnp.logical_and(
-                            jnp.logical_and(
-                                jnp.logical_not(prev_ok),
-                                curr_ok
-                            ),
-                            placed_ok
-    )
+    placed_check = check_map(current_state.map.game_map, object_to_place, count_to_stand)
+    
+    return jnp.logical_and(jnp.logical_and(jnp.logical_not(prev_inventory_check), curr_inventory_check), placed_check)
     
     
 def check_inventory(inventory: Union[PlayerInventoryClassic, PlayerInventory], object_inventory_id: int, count_to_collect: int):
@@ -67,7 +52,14 @@ def check_inventory(inventory: Union[PlayerInventoryClassic, PlayerInventory], o
                 lambda: inventory.diamond,
                 lambda: inventory.diamond,
                 lambda: inventory.diamond,
-
+                
+                # lambda: lax.switch(inventory.inventory, [lambda: inventory.pickaxe, lambda: inventory.wood_pickaxe]), 
+                # lambda: lax.switch(inventory.inventory, [lambda: inventory.sword, lambda: inventory.stone_pickaxe]),
+                # lambda: lax.switch(inventory.inventory, [lambda: inventory.bow,   lambda: inventory.iron_pickaxe]), 
+                # lambda: lax.switch(inventory.inventory, [lambda: inventory.arrows, lambda: inventory.wood_sword]),
+                # lambda: lax.switch(inventory.inventory, [lambda: inventory.armour, lambda: inventory.stone_sword]),
+                # lambda: lax.switch(inventory.inventory, [lambda: inventory.torches, lambda: inventory.iron_sword]),
+            
                 lambda: inventory.ruby,
                 lambda: inventory.sapphire,
                 
@@ -75,16 +67,12 @@ def check_inventory(inventory: Union[PlayerInventoryClassic, PlayerInventory], o
                 lambda: inventory.diamond, #lambda: inventory.books
             ]
         )
-    # Retrieve the count for the selected item        
+        
     collected_count = get_item(object_inventory_id, inventory)
-    
-    # Return whether it meets or exceeds the target
     return collected_count >= count_to_collect
 
 
 def check_map(game_map: jax.Array, object_to_place: int, count_to_stand: int):
-    # Count occurrences of the target object
+
     placed_count = jnp.sum(game_map == object_to_place)
-    
-    # Return whether it meets or exceeds the target
     return placed_count >= count_to_stand

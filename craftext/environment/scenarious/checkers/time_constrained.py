@@ -15,7 +15,9 @@ def checker_time_placement(game_data: Union[GameData, GameDataClassic],  target_
     block_index = target_state.block_type
     radius = target_state.radius
     time_state = target_state.time_state
-
+    # return jax.lax.select(target_state.need_to_achieve, 
+    #                time_place_checker(game_data, block_index, radius, time_state),
+    #                jnp.array(False))
     return at_time_block_placed(game_data, block_index, radius, time_state)
 
 def at_time_block_placed(game_data: Union[GameData, GameDataClassic], block_index, radius, time_state) -> jax.Array:

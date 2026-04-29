@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import importlib
 import inspect
 import pathlib
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -17,6 +17,24 @@ from craftax.craftax_env import make_craftax_env_from_name
 from craftext.environment.scenarious.loader import resolve_base_environment
 
 WORLD_PRESET_CONFIG_DIR_NAME = "world_presets"
+BUILTIN_PRESET_ALIASES = {
+    "ring": "ring_random",
+    "ring_random": "ring_random",
+    "ring_fixed": "ring_fixed",
+    "box": "box",
+    "box3": "box3_random_trees",
+    "box3_random_trees": "box3_random_trees",
+    "boxed_3x3_random_trees": "box3_random_trees",
+}
+BUILTIN_PRESET_NAMES = {
+    "default",
+    "random",
+    "fixed",
+    "ring_random",
+    "ring_fixed",
+    "box",
+    "box3_random_trees",
+}
 
 
 @dataclass(frozen=True)
@@ -24,6 +42,15 @@ class InventoryGrantSpec:
     item: str
     value: Any
     probability: float = 1.0
+
+
+@dataclass(frozen=True)
+class GeneratedWorldState:
+    map: Any
+    player_position: Any
+    item_map: Any = None
+    mob_map: Any = None
+    light_map: Any = None
 
 
 @dataclass(frozen=True)
@@ -38,7 +65,6 @@ class WorldPresetSpec:
     floor_block: Optional[str] = None
     perimeter_block: Optional[str] = None
     disable_mob_spawns: Optional[bool] = None
-    walk_through_perimeter_objects: Optional[bool] = None
     starting_inventory: Tuple[InventoryGrantSpec, ...] = ()
     starting_intrinsics: Tuple[InventoryGrantSpec, ...] = ()
     intrinsic_rates: Tuple[InventoryGrantSpec, ...] = ()
@@ -57,6 +83,27 @@ class WorldPresetSpec:
     @property
     def has_box(self) -> bool:
         return self.box_inner_size is not None
+
+    @property
+    def has_map_overlay(self) -> bool:
+        return self.has_ring or self.has_box
+
+    @property
+    def uses_map_adapter(self) -> bool:
+        return self.has_map_overlay or bool(self.map_rules)
+
+    @property
+    def uses_character_adapter(self) -> bool:
+        return bool(
+            self.starting_inventory
+            or self.starting_intrinsics
+            or self.intrinsic_rates
+            or self.intrinsic_thresholds
+        )
+
+    @property
+    def uses_recovery_adapter(self) -> bool:
+        return bool(self.recovery_rules)
 
 
 def get_world_preset_config_dir() -> pathlib.Path:
@@ -196,6 +243,14 @@ def _grants_to_mapping(grants: Tuple[InventoryGrantSpec, ...]) -> dict[str, Any]
     return {grant.item: grant.value for grant in grants}
 
 
+def _normalize_builtin_preset_name(preset_name: Optional[str]) -> str:
+    normalized_preset = (preset_name or "default").strip().lower()
+    normalized_preset = BUILTIN_PRESET_ALIASES.get(normalized_preset, normalized_preset)
+    if normalized_preset not in BUILTIN_PRESET_NAMES:
+        return "default"
+    return normalized_preset
+
+
 def build_world_preset_spec(
     *,
     env_name: str,
@@ -206,7 +261,6 @@ def build_world_preset_spec(
     floor_block: Optional[str] = None,
     perimeter_block: Optional[str] = None,
     disable_mob_spawns: Optional[bool] = None,
-    walk_through_perimeter_objects: Optional[bool] = None,
     starting_inventory: Any = None,
     starting_intrinsics: Any = None,
     intrinsic_rates: Any = None,
@@ -239,31 +293,12 @@ def build_world_preset_spec(
             )
 
     normalized_env_name = normalize_craftax_env_name(env_name)
-    normalized_preset = (preset_name or "default").strip().lower()
+    normalized_preset = _normalize_builtin_preset_name(preset_name)
     normalized_map_size = _normalize_map_size(map_size)
 
     resolved_seed = int(seed) if seed is not None else (
         1 if normalized_preset in {"fixed", "ring_fixed"} else int(np.random.randint(0, 2**31 - 1))
     )
-
-    if normalized_preset in {"ring", "ring_random"}:
-        normalized_preset = "ring_random"
-    if normalized_preset == "ring_fixed":
-        normalized_preset = "ring_fixed"
-    if normalized_preset == "box":
-        normalized_preset = "box"
-    if normalized_preset in {"box3", "box3_random_trees", "boxed_3x3_random_trees"}:
-        normalized_preset = "box3_random_trees"
-    if normalized_preset not in {
-        "default",
-        "random",
-        "fixed",
-        "ring_random",
-        "ring_fixed",
-        "box",
-        "box3_random_trees",
-    }:
-        normalized_preset = "default"
 
     if normalized_preset.startswith("ring_"):
         ring_inner_radius = 0 if ring_inner_radius is None else int(ring_inner_radius)
@@ -277,8 +312,6 @@ def build_world_preset_spec(
         perimeter_tree_prob = 0.7 if perimeter_tree_prob is None else float(perimeter_tree_prob)
         if disable_mob_spawns is None:
             disable_mob_spawns = True
-        if walk_through_perimeter_objects is None:
-            walk_through_perimeter_objects = True
     else:
         box_inner_size = None
         perimeter_tree_prob = None
@@ -292,7 +325,6 @@ def build_world_preset_spec(
         floor_block=None if floor_block is None else str(floor_block),
         perimeter_block=None if perimeter_block is None else str(perimeter_block),
         disable_mob_spawns=disable_mob_spawns,
-        walk_through_perimeter_objects=walk_through_perimeter_objects,
         starting_inventory=_normalize_inventory_grants(starting_inventory),
         starting_intrinsics=_normalize_named_grants(starting_intrinsics, "starting_intrinsics"),
         intrinsic_rates=_normalize_named_grants(intrinsic_rates, "intrinsic_rates"),
@@ -375,10 +407,6 @@ def build_world_preset_spec_from_config(
         "disable_mob_spawns",
         inherited.disable_mob_spawns if inherited is not None else None,
     )
-    walk_through_perimeter_objects_value = config_data.get(
-        "walk_through_perimeter_objects",
-        inherited.walk_through_perimeter_objects if inherited is not None else None,
-    )
     starting_inventory_value = config_data.get(
         "starting_inventory",
         {grant.item: {"value": grant.value, "probability": grant.probability} for grant in inherited.starting_inventory}
@@ -441,7 +469,6 @@ def build_world_preset_spec_from_config(
         floor_block=floor_block_value,
         perimeter_block=perimeter_block_value,
         disable_mob_spawns=disable_mob_spawns_value,
-        walk_through_perimeter_objects=walk_through_perimeter_objects_value,
         starting_inventory=starting_inventory_value,
         starting_intrinsics=starting_intrinsics_value,
         intrinsic_rates=intrinsic_rates_value,
@@ -469,7 +496,12 @@ def _build_static_env_params(env_name: str, map_size: Optional[Tuple[int, int]])
     return StaticEnvParams(map_size=map_size)
 
 
-def build_env_and_params(spec: WorldPresetSpec, *, auto_reset: bool = False) -> Tuple[Any, Any]:
+def build_env_and_params(
+    spec: WorldPresetSpec,
+    *,
+    auto_reset: bool = False,
+    adapter_cls: Optional[type[Any]] = None,
+) -> Tuple[Any, Any]:
     """Construct Craftax env instance and env params for a world preset."""
     static_env_params = _build_static_env_params(spec.env_name, spec.map_size)
 
@@ -513,19 +545,9 @@ def build_env_and_params(spec: WorldPresetSpec, *, auto_reset: bool = False) -> 
             replace_kwargs["spawn_skeleton_chance"] = 0.0
         env_params = env_params.replace(**replace_kwargs)
 
-    if spec.has_ring or spec.has_box:
-        env = WorldPresetAdapter(env, spec)
-    if (
-        spec.starting_inventory
-        or spec.starting_intrinsics
-        or spec.intrinsic_rates
-        or spec.intrinsic_thresholds
-    ):
-        env = CharacterStateAdapter(env, spec)
-    if spec.recovery_rules:
-        env = RecoveryStateAdapter(env, spec)
-    if spec.map_rules:
-        env = MapStateAdapter(env, spec)
+    if spec.uses_map_adapter or spec.uses_character_adapter or spec.uses_recovery_adapter:
+        runtime_adapter_cls = CompositePresetAdapter if adapter_cls is None else adapter_cls
+        env = runtime_adapter_cls(env, spec)
 
     return env, env_params
 
@@ -628,48 +650,6 @@ def _resolve_full_block_value(block_name: Optional[str], default_value: int) -> 
         raise ValueError(f"Unknown full block name for world preset: {block_name}") from exc
 
 
-def _box_walkable_mask(level_shape: tuple[int, int], inner_size: int) -> jnp.ndarray:
-    height, width = level_shape
-    center_x = height // 2
-    center_y = width // 2
-    half = inner_size // 2
-    inner_x0 = center_x - half
-    inner_x1 = inner_x0 + inner_size
-    inner_y0 = center_y - half
-    inner_y1 = inner_y0 + inner_size
-
-    mask = jnp.zeros(level_shape, dtype=bool)
-    return mask.at[inner_x0:inner_x1, inner_y0:inner_y1].set(True)
-
-
-def _box_perimeter_mask(level_shape: tuple[int, int], inner_size: int) -> jnp.ndarray:
-    height, width = level_shape
-    center_x = height // 2
-    center_y = width // 2
-    half = inner_size // 2
-    inner_x0 = center_x - half
-    inner_x1 = inner_x0 + inner_size
-    inner_y0 = center_y - half
-    inner_y1 = inner_y0 + inner_size
-
-    ring_x0 = max(inner_x0 - 1, 0)
-    ring_x1 = min(inner_x1 + 1, height)
-    ring_y0 = max(inner_y0 - 1, 0)
-    ring_y1 = min(inner_y1 + 1, width)
-
-    mask = jnp.zeros(level_shape, dtype=bool)
-    mask = mask.at[ring_x0:ring_x1, ring_y0:ring_y1].set(True)
-    mask = mask.at[inner_x0:inner_x1, inner_y0:inner_y1].set(False)
-    return mask
-
-
-def _ring_walkable_mask(level_shape: tuple[int, int], inner_radius: int, outer_radius: int) -> jnp.ndarray:
-    height, width = level_shape
-    center_x = height // 2
-    center_y = width // 2
-    return _distance_mask(height, width, center_x, center_y, inner_radius, outer_radius)
-
-
 def _coerce_record_value(current_value: Any, desired_value: Any):
     if isinstance(current_value, jnp.ndarray):
         if isinstance(desired_value, (list, tuple)):
@@ -713,62 +693,121 @@ def _apply_grants_to_record(
     return updated_record
 
 
-class WorldPresetAdapter:
-    """Adapter that post-processes the reset state into a custom preset world."""
+def _apply_state_grants_to_state(
+    *,
+    state: Any,
+    grants: Tuple[InventoryGrantSpec, ...],
+    key: Any,
+    label: str,
+    env_name: str,
+):
+    rng = key
+    updates: dict[str, Any] = {}
+    for grant in grants:
+        if not hasattr(state, grant.item):
+            raise ValueError(
+                f"World preset {label} item {grant.item!r} does not exist for env {env_name}"
+            )
+        rng, sample_rng = jax.random.split(rng)
+        include_item = jax.random.uniform(sample_rng) < float(grant.probability)
+        current_value = getattr(state, grant.item)
+        desired_value = _coerce_record_value(current_value=current_value, desired_value=grant.value)
+        final_value = jax.tree_util.tree_map(
+            lambda desired, current: jax.lax.select(include_item, desired, current),
+            desired_value,
+            current_value,
+        )
+        updates[grant.item] = final_value
+    return state.replace(**updates) if updates else state
 
-    def __init__(self, env: Any, spec: WorldPresetSpec) -> None:
-        self.env = env
+
+class BaseWorldGenerator:
+    """Extension point for custom world generation overlays."""
+
+    generator_name = "base"
+
+    def __init__(self, spec: WorldPresetSpec, resolved_family: str) -> None:
         self.spec = spec
+        self.resolved_family = resolved_family
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.env, name)
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return False
 
-    def reset(self, key: Any, params: Any):
-        obs, state = self.env.reset(key, params)
-        state = self._apply_preset(state, key)
-        if hasattr(self.env, "get_obs"):
-            obs = self.env.get_obs(state)
-        return obs, state
+    def apply(self, state: Any, key: Any) -> GeneratedWorldState:
+        raise NotImplementedError
 
-    def step(self, key: Any, state: Any, action: int, params: Any):
-        return self.env.step(key, state, action, params)
 
-    def _apply_preset(self, state: Any, key: Any):
-        resolved_family = resolve_base_environment(self.spec.env_name).family
-        if resolved_family == "classic":
+class BoxWorldGenerator(BaseWorldGenerator):
+    generator_name = "box"
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return spec.has_box
+
+    def apply(self, state: Any, key: Any) -> GeneratedWorldState:
+        if self.resolved_family == "classic":
             from craftax.craftax_classic.constants import BlockType
-            if self.spec.has_box:
-                blocked_value = _resolve_classic_block_value(
-                    self.spec.blocked_block,
-                    BlockType.OUT_OF_BOUNDS.value,
-                )
-                floor_value = _resolve_classic_block_value(
-                    self.spec.floor_block,
-                    BlockType.GRASS.value,
-                )
-                perimeter_value = _resolve_classic_block_value(
-                    self.spec.perimeter_block,
-                    BlockType.TREE.value,
-                )
-                updated_map, spawn_position = _apply_box_to_level(
-                    state.map,
-                    key=key,
-                    blocked_value=blocked_value,
-                    floor_value=floor_value,
-                    tree_value=perimeter_value,
-                    inner_size=int(self.spec.box_inner_size),
-                    perimeter_tree_prob=float(self.spec.perimeter_tree_prob or 0.7),
-                )
-                return state.replace(map=updated_map, player_position=spawn_position)
 
-            blocked_value = _resolve_classic_block_value(
-                self.spec.blocked_block,
-                BlockType.WATER.value,
+            blocked_value = _resolve_classic_block_value(self.spec.blocked_block, BlockType.OUT_OF_BOUNDS.value)
+            floor_value = _resolve_classic_block_value(self.spec.floor_block, BlockType.GRASS.value)
+            perimeter_value = _resolve_classic_block_value(self.spec.perimeter_block, BlockType.TREE.value)
+            updated_map, spawn_position = _apply_box_to_level(
+                state.map,
+                key=key,
+                blocked_value=blocked_value,
+                floor_value=floor_value,
+                tree_value=perimeter_value,
+                inner_size=int(self.spec.box_inner_size),
+                perimeter_tree_prob=float(self.spec.perimeter_tree_prob or 0.7),
             )
-            floor_value = _resolve_classic_block_value(
-                self.spec.floor_block,
-                BlockType.GRASS.value,
-            )
+            return GeneratedWorldState(map=updated_map, player_position=spawn_position)
+
+        from craftax.craftax.constants import BlockType
+
+        current_level = int(state.player_level)
+        current_map = state.map[current_level]
+        default_floor_value = BlockType.GRASS.value if current_level == 0 else BlockType.PATH.value
+        default_perimeter_value = BlockType.TREE.value if current_level == 0 else BlockType.WALL.value
+        blocked_value = _resolve_full_block_value(self.spec.blocked_block, BlockType.OUT_OF_BOUNDS.value)
+        floor_value = _resolve_full_block_value(self.spec.floor_block, default_floor_value)
+        perimeter_value = _resolve_full_block_value(self.spec.perimeter_block, default_perimeter_value)
+        updated_level_map, spawn_position = _apply_box_to_level(
+            current_map,
+            key=key,
+            blocked_value=blocked_value,
+            floor_value=floor_value,
+            tree_value=perimeter_value,
+            inner_size=int(self.spec.box_inner_size),
+            perimeter_tree_prob=float(self.spec.perimeter_tree_prob or 0.7),
+        )
+        updated_light_level = jnp.where(
+            updated_level_map == BlockType.OUT_OF_BOUNDS.value,
+            0.0,
+            state.light_map[current_level],
+        )
+        return GeneratedWorldState(
+            map=state.map.at[current_level].set(updated_level_map),
+            player_position=spawn_position,
+            item_map=state.item_map.at[current_level].set(jnp.zeros_like(state.item_map[current_level])),
+            mob_map=state.mob_map.at[current_level].set(jnp.zeros_like(state.mob_map[current_level])),
+            light_map=state.light_map.at[current_level].set(updated_light_level),
+        )
+
+
+class RingWorldGenerator(BaseWorldGenerator):
+    generator_name = "ring"
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return spec.has_ring
+
+    def apply(self, state: Any, key: Any) -> GeneratedWorldState:
+        if self.resolved_family == "classic":
+            from craftax.craftax_classic.constants import BlockType
+
+            blocked_value = _resolve_classic_block_value(self.spec.blocked_block, BlockType.WATER.value)
+            floor_value = _resolve_classic_block_value(self.spec.floor_block, BlockType.GRASS.value)
             updated_map, spawn_position = _apply_ring_to_level(
                 state.map,
                 player_position=state.player_position,
@@ -777,42 +816,12 @@ class WorldPresetAdapter:
                 inner_radius=int(self.spec.ring_inner_radius or 0),
                 outer_radius=int(self.spec.ring_outer_radius),
             )
-            return state.replace(map=updated_map, player_position=spawn_position)
+            return GeneratedWorldState(map=updated_map, player_position=spawn_position)
 
         from craftax.craftax.constants import BlockType, ItemType
 
         current_level = int(state.player_level)
         current_map = state.map[current_level]
-        if self.spec.has_box:
-            default_floor_value = BlockType.GRASS.value if current_level == 0 else BlockType.PATH.value
-            default_perimeter_value = BlockType.TREE.value if current_level == 0 else BlockType.WALL.value
-            blocked_value = _resolve_full_block_value(
-                self.spec.blocked_block,
-                BlockType.OUT_OF_BOUNDS.value,
-            )
-            floor_value = _resolve_full_block_value(self.spec.floor_block, default_floor_value)
-            perimeter_value = _resolve_full_block_value(self.spec.perimeter_block, default_perimeter_value)
-            updated_level_map, spawn_position = _apply_box_to_level(
-                current_map,
-                key=key,
-                blocked_value=blocked_value,
-                floor_value=floor_value,
-                tree_value=perimeter_value,
-                inner_size=int(self.spec.box_inner_size),
-                perimeter_tree_prob=float(self.spec.perimeter_tree_prob or 0.7),
-            )
-            updated_map = state.map.at[current_level].set(updated_level_map)
-            updated_item_map = state.item_map.at[current_level].set(jnp.zeros_like(state.item_map[current_level]))
-            updated_mob_map = state.mob_map.at[current_level].set(jnp.zeros_like(state.mob_map[current_level]))
-            updated_light_map = state.light_map.at[current_level].set(jnp.where(updated_level_map == BlockType.OUT_OF_BOUNDS.value, 0.0, state.light_map[current_level]))
-            return state.replace(
-                map=updated_map,
-                item_map=updated_item_map,
-                mob_map=updated_mob_map,
-                light_map=updated_light_map,
-                player_position=spawn_position,
-            )
-
         blocked_value = _resolve_full_block_value(
             self.spec.blocked_block,
             BlockType.WATER.value if current_level == 0 else BlockType.WALL.value,
@@ -837,89 +846,171 @@ class WorldPresetAdapter:
             int(self.spec.ring_inner_radius or 0),
             int(self.spec.ring_outer_radius),
         )
-
-        updated_map = state.map.at[current_level].set(updated_level_map)
-        updated_item_map = state.item_map.at[current_level].set(jnp.where(ring_mask, state.item_map[current_level], ItemType.NONE.value))
-        updated_mob_map = state.mob_map.at[current_level].set(jnp.where(ring_mask, state.mob_map[current_level], 0))
-        updated_light_map = state.light_map.at[current_level].set(jnp.where(ring_mask, state.light_map[current_level], 0.0))
-
-        return state.replace(
-            map=updated_map,
-            item_map=updated_item_map,
-            mob_map=updated_mob_map,
-            light_map=updated_light_map,
+        return GeneratedWorldState(
+            map=state.map.at[current_level].set(updated_level_map),
             player_position=spawn_position,
+            item_map=state.item_map.at[current_level].set(
+                jnp.where(ring_mask, state.item_map[current_level], ItemType.NONE.value)
+            ),
+            mob_map=state.mob_map.at[current_level].set(jnp.where(ring_mask, state.mob_map[current_level], 0)),
+            light_map=state.light_map.at[current_level].set(
+                jnp.where(ring_mask, state.light_map[current_level], 0.0)
+            ),
         )
 
 
-class CharacterStateAdapter:
-    """Adapter that patches starting character state and applies custom intrinsic dynamics."""
+WORLD_GENERATOR_REGISTRY: tuple[type[BaseWorldGenerator], ...] = (
+    BoxWorldGenerator,
+    RingWorldGenerator,
+)
 
-    def __init__(self, env: Any, spec: WorldPresetSpec) -> None:
-        self.env = env
+
+class BaseMapBehavior:
+    """Extension point for map-related policies such as collision rules."""
+
+    behavior_name = "base_map"
+
+    def __init__(self, spec: WorldPresetSpec, resolved_family: str) -> None:
         self.spec = spec
+        self.resolved_family = resolved_family
+        self.rules = _grants_to_mapping(spec.map_rules)
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return False
+
+    def apply_reset(self, state: Any, key: Any) -> Any:
+        return state
+
+    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
+        return new_state
+
+
+class SolidBlocksBehavior(BaseMapBehavior):
+    behavior_name = "solid_blocks"
+
+    def __init__(self, spec: WorldPresetSpec, resolved_family: str) -> None:
+        super().__init__(spec, resolved_family)
+        self.solid_block_values = self._resolve_solid_block_values()
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return bool(spec.map_rules)
+
+    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
+        if not self.solid_block_values:
+            return new_state
+
+        if self.resolved_family == "classic":
+            pos = new_state.player_position
+            current_block = int(new_state.map[pos[0], pos[1]])
+        else:
+            pos = new_state.player_position
+            level = int(new_state.player_level)
+            current_block = int(new_state.map[level, pos[0], pos[1]])
+
+        if current_block not in self.solid_block_values:
+            return new_state
+        return new_state.replace(player_position=previous_state.player_position)
+
+    def _resolve_solid_block_values(self) -> set[int]:
+        solid_values: set[int] = set()
+        if bool(self.rules.get("solid_out_of_bounds", False)):
+            if self.resolved_family == "classic":
+                from craftax.craftax_classic.constants import BlockType
+            else:
+                from craftax.craftax.constants import BlockType
+            solid_values.add(int(BlockType.OUT_OF_BOUNDS.value))
+
+        extra_blocks = self.rules.get("solid_blocks", [])
+        if isinstance(extra_blocks, str):
+            extra_blocks = [extra_blocks]
+        if extra_blocks:
+            resolver = _resolve_classic_block_value if self.resolved_family == "classic" else _resolve_full_block_value
+            for block_name in extra_blocks:
+                solid_values.add(int(resolver(str(block_name), 0)))
+        return solid_values
+
+
+MAP_BEHAVIOR_REGISTRY: tuple[type[BaseMapBehavior], ...] = (
+    SolidBlocksBehavior,
+)
+
+
+class BaseCharacterBehavior:
+    """Extension point for character state overrides and dynamics."""
+
+    behavior_name = "base_character"
+
+    def __init__(self, spec: WorldPresetSpec) -> None:
+        self.spec = spec
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return False
+
+    def apply_reset(self, state: Any, key: Any) -> Any:
+        return state
+
+    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
+        return new_state
+
+
+class StartingInventoryBehavior(BaseCharacterBehavior):
+    behavior_name = "starting_inventory"
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return bool(spec.starting_inventory)
+
+    def apply_reset(self, state: Any, key: Any) -> Any:
+        inventory = _apply_grants_to_record(
+            record=state.inventory,
+            grants=self.spec.starting_inventory,
+            key=key,
+            context_name=f"inventory for env {self.spec.env_name}",
+        )
+        return state.replace(inventory=inventory)
+
+
+class StartingIntrinsicsBehavior(BaseCharacterBehavior):
+    behavior_name = "starting_intrinsics"
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return bool(spec.starting_intrinsics)
+
+    def apply_reset(self, state: Any, key: Any) -> Any:
+        return _apply_state_grants_to_state(
+            state=state,
+            grants=self.spec.starting_intrinsics,
+            key=key,
+            label="starting_intrinsics",
+            env_name=self.spec.env_name,
+        )
+
+
+class IntrinsicDynamicsBehavior(BaseCharacterBehavior):
+    behavior_name = "intrinsic_dynamics"
+
+    def __init__(self, spec: WorldPresetSpec) -> None:
+        super().__init__(spec)
         self.rate_values = _grants_to_mapping(spec.intrinsic_rates)
         self.threshold_values = _grants_to_mapping(spec.intrinsic_thresholds)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.env, name)
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return bool(spec.intrinsic_rates or spec.intrinsic_thresholds)
 
-    def reset(self, key: Any, params: Any):
-        obs, state = self.env.reset(key, params)
-        if self.spec.starting_inventory:
-            inventory = _apply_grants_to_record(
-                record=state.inventory,
-                grants=self.spec.starting_inventory,
-                key=key,
-                context_name=f"inventory for env {self.spec.env_name}",
-            )
-            state = state.replace(inventory=inventory)
-        if self.spec.starting_intrinsics:
-            state = self._apply_state_grants(state, self.spec.starting_intrinsics, key, "starting_intrinsics")
-        if hasattr(self.env, "get_obs"):
-            obs = self.env.get_obs(state)
-        return obs, state
-
-    def step(self, key: Any, state: Any, action: int, params: Any):
-        obs, new_state, reward, done, info = self.env.step(key, state, action, params)
-        new_state = self._apply_custom_intrinsic_dynamics(new_state)
-        if hasattr(self.env, "get_obs"):
-            obs = self.env.get_obs(new_state)
-        return obs, new_state, reward, done, info
-
-    def _apply_state_grants(self, state: Any, grants: Tuple[InventoryGrantSpec, ...], key: Any, label: str):
-        rng = key
-        updates: dict[str, Any] = {}
-        for grant in grants:
-            if not hasattr(state, grant.item):
-                raise ValueError(
-                    f"World preset {label} item {grant.item!r} does not exist for env {self.spec.env_name}"
-                )
-            rng, sample_rng = jax.random.split(rng)
-            include_item = jax.random.uniform(sample_rng) < float(grant.probability)
-            current_value = getattr(state, grant.item)
-            desired_value = _coerce_record_value(current_value=current_value, desired_value=grant.value)
-            final_value = jax.tree_util.tree_map(
-                lambda desired, current: jax.lax.select(include_item, desired, current),
-                desired_value,
-                current_value,
-            )
-            updates[grant.item] = final_value
-        return state.replace(**updates) if updates else state
-
-    def _apply_custom_intrinsic_dynamics(self, state: Any):
-        if not self.rate_values and not self.threshold_values:
-            return state
-
+    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
+        state = new_state
         updates: dict[str, Any] = {}
 
         def _value(name: str, default: float) -> float:
-            raw = self.rate_values.get(name, default)
-            return float(raw)
+            return float(self.rate_values.get(name, default))
 
         def _threshold(name: str, default: float) -> float:
-            raw = self.threshold_values.get(name, default)
-            return float(raw)
+            return float(self.threshold_values.get(name, default))
 
         def _process_meter(counter_name: str, resource_name: str, rate_name: str, threshold_name: str, default_threshold: float):
             if not hasattr(state, counter_name) or not hasattr(state, resource_name):
@@ -979,47 +1070,50 @@ class CharacterStateAdapter:
         return state.replace(**updates) if updates else state
 
 
-class RecoveryStateAdapter:
-    """Adapter that applies preset-defined recovery overrides for sleep/rest."""
+CHARACTER_BEHAVIOR_REGISTRY: tuple[type[BaseCharacterBehavior], ...] = (
+    StartingInventoryBehavior,
+    StartingIntrinsicsBehavior,
+    IntrinsicDynamicsBehavior,
+)
 
-    def __init__(self, env: Any, spec: WorldPresetSpec) -> None:
-        self.env = env
+
+class BaseRecoveryBehavior:
+    """Extension point for recovery/sleep/rest overrides."""
+
+    behavior_name = "base_recovery"
+
+    def __init__(self, spec: WorldPresetSpec) -> None:
         self.spec = spec
         self.rules = _grants_to_mapping(spec.recovery_rules)
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.env, name)
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return False
 
-    def reset(self, key: Any, params: Any):
-        return self.env.reset(key, params)
+    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
+        return new_state
 
-    def step(self, key: Any, state: Any, action: int, params: Any):
-        obs, new_state, reward, done, info = self.env.step(key, state, action, params)
-        new_state = self._apply_recovery_rules(new_state)
-        if hasattr(self.env, "get_obs"):
-            obs = self.env.get_obs(new_state)
-        return obs, new_state, reward, done, info
 
-    def _apply_recovery_rules(self, state: Any):
+class InstantRecoveryBehavior(BaseRecoveryBehavior):
+    behavior_name = "instant_recovery"
+
+    @classmethod
+    def matches(cls, spec: WorldPresetSpec) -> bool:
+        return bool(spec.recovery_rules)
+
+    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
+        state = new_state
         updates: dict[str, Any] = {}
         instant_sleep_enabled = bool(self.rules.get("instant_sleep_recovery", False))
         instant_rest_enabled = bool(self.rules.get("instant_rest_recovery", False))
 
         if instant_sleep_enabled and getattr(state, "is_sleeping", False):
-            self._apply_recovery_mode_updates(
-                state=state,
-                updates=updates,
-                prefix="sleep",
-            )
+            self._apply_recovery_mode_updates(state=state, updates=updates, prefix="sleep")
             if bool(self.rules.get("wake_after_sleep_recovery", True)) and hasattr(state, "is_sleeping"):
                 updates["is_sleeping"] = False
 
         if instant_rest_enabled and getattr(state, "is_resting", False):
-            self._apply_recovery_mode_updates(
-                state=state,
-                updates=updates,
-                prefix="rest",
-            )
+            self._apply_recovery_mode_updates(state=state, updates=updates, prefix="rest")
             if bool(self.rules.get("stop_rest_after_recovery", True)) and hasattr(state, "is_resting"):
                 updates["is_resting"] = False
 
@@ -1049,64 +1143,112 @@ class RecoveryStateAdapter:
             )
 
 
-class MapStateAdapter:
-    """Adapter that enforces preset-defined solid map blocks without patching Craftax."""
+RECOVERY_BEHAVIOR_REGISTRY: tuple[type[BaseRecoveryBehavior], ...] = (
+    InstantRecoveryBehavior,
+)
+
+
+class CompositePresetAdapter:
+    """Single runtime wrapper that applies all preset pipelines and recomputes obs once."""
 
     def __init__(self, env: Any, spec: WorldPresetSpec) -> None:
         self.env = env
         self.spec = spec
-        self.rules = _grants_to_mapping(spec.map_rules)
+        self.resolved_family = resolve_base_environment(spec.env_name).family
+        self.world_generator = self._build_world_generator()
+        self.map_behaviors = self._build_map_behaviors()
+        self.character_behaviors = self._build_character_behaviors()
+        self.recovery_behaviors = self._build_recovery_behaviors()
+        self.reset_transforms = self._build_reset_pipeline()
+        self.step_transforms = self._build_step_pipeline()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.env, name)
 
     def reset(self, key: Any, params: Any):
-        return self.env.reset(key, params)
+        obs, state = self.env.reset(key, params)
+        for transform in self.reset_transforms:
+            state = transform(state, key)
+        return self._finalize(obs=obs, state=state)
 
     def step(self, key: Any, state: Any, action: int, params: Any):
         obs, new_state, reward, done, info = self.env.step(key, state, action, params)
-        new_state = self._apply_solid_block_rules(previous_state=state, new_state=new_state)
-        if hasattr(self.env, "get_obs"):
-            obs = self.env.get_obs(new_state)
+        for transform in self.step_transforms:
+            new_state = transform(state, new_state)
+        obs, new_state = self._finalize(obs=obs, state=new_state)
         return obs, new_state, reward, done, info
 
-    def _apply_solid_block_rules(self, *, previous_state: Any, new_state: Any):
-        solid_values = self._resolve_solid_block_values()
-        if not solid_values:
-            return new_state
+    def _finalize(self, *, obs: Any, state: Any):
+        if hasattr(self.env, "get_obs"):
+            obs = self.env.get_obs(state)
+        return obs, state
 
-        resolved_family = resolve_base_environment(self.spec.env_name).family
-        if resolved_family == "classic":
-            pos = new_state.player_position
-            current_block = int(new_state.map[pos[0], pos[1]])
-        else:
-            pos = new_state.player_position
-            level = int(new_state.player_level)
-            current_block = int(new_state.map[level, pos[0], pos[1]])
+    def _build_reset_pipeline(self) -> tuple[Callable[[Any, Any], Any], ...]:
+        transforms: list[Callable[[Any, Any], Any]] = []
+        if self.spec.uses_map_adapter:
+            transforms.append(self._apply_map_overlay)
+        for behavior in self.map_behaviors:
+            if behavior.apply_reset.__func__ is not BaseMapBehavior.apply_reset:
+                transforms.append(behavior.apply_reset)
+        for behavior in self.character_behaviors:
+            if behavior.apply_reset.__func__ is not BaseCharacterBehavior.apply_reset:
+                transforms.append(behavior.apply_reset)
+        return tuple(transforms)
 
-        if current_block not in solid_values:
-            return new_state
-        return new_state.replace(player_position=previous_state.player_position)
+    def _build_step_pipeline(self) -> tuple[Callable[[Any, Any], Any], ...]:
+        transforms: list[Callable[[Any, Any], Any]] = []
+        for behavior in self.map_behaviors:
+            if behavior.apply_step.__func__ is not BaseMapBehavior.apply_step:
+                transforms.append(behavior.apply_step)
+        for behavior in self.character_behaviors:
+            if behavior.apply_step.__func__ is not BaseCharacterBehavior.apply_step:
+                transforms.append(behavior.apply_step)
+        for behavior in self.recovery_behaviors:
+            if behavior.apply_step.__func__ is not BaseRecoveryBehavior.apply_step:
+                transforms.append(behavior.apply_step)
+        return tuple(transforms)
 
-    def _resolve_solid_block_values(self) -> set[int]:
-        resolved_family = resolve_base_environment(self.spec.env_name).family
-        solid_values: set[int] = set()
-        if bool(self.rules.get("solid_out_of_bounds", False)):
-            if resolved_family == "classic":
-                from craftax.craftax_classic.constants import BlockType
-            else:
-                from craftax.craftax.constants import BlockType
-            solid_values.add(int(BlockType.OUT_OF_BOUNDS.value))
+    def _build_map_behaviors(self) -> tuple[BaseMapBehavior, ...]:
+        return tuple(
+            behavior_cls(self.spec, self.resolved_family)
+            for behavior_cls in MAP_BEHAVIOR_REGISTRY
+            if behavior_cls.matches(self.spec)
+        )
 
-        extra_blocks = self.rules.get("solid_blocks", [])
-        if isinstance(extra_blocks, str):
-            extra_blocks = [extra_blocks]
-        if extra_blocks:
-            if resolved_family == "classic":
-                resolver = _resolve_classic_block_value
-            else:
-                resolver = _resolve_full_block_value
-            for block_name in extra_blocks:
-                solid_values.add(int(resolver(str(block_name), 0)))
+    def _build_character_behaviors(self) -> tuple[BaseCharacterBehavior, ...]:
+        return tuple(
+            behavior_cls(self.spec)
+            for behavior_cls in CHARACTER_BEHAVIOR_REGISTRY
+            if behavior_cls.matches(self.spec)
+        )
 
-        return solid_values
+    def _build_recovery_behaviors(self) -> tuple[BaseRecoveryBehavior, ...]:
+        return tuple(
+            behavior_cls(self.spec)
+            for behavior_cls in RECOVERY_BEHAVIOR_REGISTRY
+            if behavior_cls.matches(self.spec)
+        )
+
+    def _apply_map_overlay(self, state: Any, key: Any):
+        if self.world_generator is None:
+            return state
+        generated = self.world_generator.apply(state, key)
+        updates = {
+            "map": generated.map,
+            "player_position": generated.player_position,
+        }
+        if generated.item_map is not None:
+            updates["item_map"] = generated.item_map
+        if generated.mob_map is not None:
+            updates["mob_map"] = generated.mob_map
+        if generated.light_map is not None:
+            updates["light_map"] = generated.light_map
+        return state.replace(**updates)
+
+    def _build_world_generator(self) -> Optional[BaseWorldGenerator]:
+        if not self.spec.has_map_overlay:
+            return None
+        for generator_cls in WORLD_GENERATOR_REGISTRY:
+            if generator_cls.matches(self.spec):
+                return generator_cls(self.spec, self.resolved_family)
+        raise ValueError(f"No world generator registered for preset {self.spec.name}")

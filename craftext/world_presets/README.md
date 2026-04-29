@@ -88,6 +88,8 @@ map_rules:
 Замечания:
 
 - `env_name` в YAML не переключает активный env, а только валидирует совместимость. Источник истины для env остаётся `--env` или `base_environment` из scenario config.
+- preset собирается как stack adapter'ов: `MapStateAdapter -> CharacterStateAdapter -> RecoveryStateAdapter`.
+- `MapStateAdapter` теперь владеет и формированием карты на `reset`, и map-коллизиями на `step`.
 - preset применяется как overlay к `state` внутри `reset`, после чего обычный `Craftax.step(...)` продолжает игру уже из модифицированного состояния.
 - если `map_size` не указан, используется обычный `make_craftax_env_from_name(...)`, как в `verl-agent-craftext`.
 
@@ -168,7 +170,7 @@ starting_inventory:
 
 Замечания по `map_rules`:
 
-- это отдельный adapter для коллизий по карте, без патча `craftax`
+- это отдельный adapter для map overlay и коллизий по карте, без патча `craftax`
 - полезные ключи:
   - `solid_out_of_bounds`
   - `solid_blocks`

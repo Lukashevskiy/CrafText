@@ -1,0 +1,6 @@
+preset: box3_random_trees
+env_name: Craftax-Classic-Pixels-v1
+map_size: 64
+seed: 123
+box_inner_size: 3
+perimeter_tree_prob: 0.8

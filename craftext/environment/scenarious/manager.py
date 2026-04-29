@@ -1,346 +1,307 @@
-import json
-import numpy as np
-import jax
-import jax.numpy as jnp
-import logging
+"""Scenario handlers and JAX-ready scenario assembly for core CrafText."""
+
+from typing import List, Type, TypeVar, Generic
 from tqdm import tqdm
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Tuple
-from craftext.environment.scenarious.loader import ScenariosConfigLoader, load_scenarios
+
+from craftext.environment.scenarious.loader import (
+    CraftextScenariosConfigLoader as ScenariosConfigLoader,
+    load_scenarios,
+    ScenariosConfig,
+)
+
+from craftext.environment.scenarious.base import AbstractScenarioHandler
+from craftext.environment.scenarious.processors import ScenarioProcessor, EncodedProcessor
+from craftext.environment.scenarious.scenario_data_pipeline import (
+    BaseScenarioData,
+    ScenarioDataPayload,
+    ScenarioRows,
+    ScenarioDataFactory,
+    create_raw_scenario_data_factory,
+    create_encoded_scenario_data_factory,
+)
+from craftext.environment.scenarious.scenario_types import ScenarioMap
+
+from craftext.environment.scenarious.instruction_transformers import(
+    AbstractInstructionTransformer, 
+    DefaultInstructionTransformer, 
+    PlansInstructionTransformer
+)
+
 from craftext.environment.craftext_constants import plans_path
+from craftext.environment.craftext_constants import Scenarios
 from craftext.environment.scenarious.checkers.target_state import TargetState
+
+import logging
+from jax import numpy as jnp
+import jax
+
+from abc import ABC, abstractmethod
 
 # Logging configuration
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Define an Enum for scenario field processing types
 class ScenarioFieldType(Enum):
+    """Schema behavior for scenario fields during expansion."""
+
     SINGLE_VALUE = "single_value"  # The base instruction (not copied)
     PARAPHRASE_LIST = "paraphrase_list"  # A list of paraphrases (added to the base instruction)
     REPEAT_WITH_PARAPHRASES = "repeat_with_paraphrases"  # Repeated for each instruction and its paraphrases
 
-# Define the schema for scenario processing
 SCENARIO_SCHEMA = {
     "instruction": ScenarioFieldType.SINGLE_VALUE,  
     "instruction_paraphrases": ScenarioFieldType.PARAPHRASE_LIST,  
     "scenario_checker": ScenarioFieldType.REPEAT_WITH_PARAPHRASES,  
     "arguments": ScenarioFieldType.REPEAT_WITH_PARAPHRASES,  
-    "str_check_lambda": ScenarioFieldType.REPEAT_WITH_PARAPHRASES  
 }
 
 @dataclass
-class ScenarioData:
-    instructions_list: list
-    scenario_checker: int
+class BaseScenarioDataJAX:
+    """JAX-serializable scenario tensors used at runtime."""
+
+    scenario_checker: jax.Array
     arguments: TargetState
-    str_check_lambda_list: list
-    indices_list: list
-    scenario_names: list
-    embeddings_list: list
 
-@dataclass
-class ScenarioDataO:
-    instructions_list: list
-    scenario_checker: list
-    arguments: list
-    str_check_lambda_list: list
-    indices_list: list
-    scenario_names: list
-    embeddings_list: list
-    original_instructions: list
 
-@dataclass
-class ScenarioDataJAX:
-    embeddings_list: jax.Array
-    scenario_checker: int
-    arguments: List[TargetState]
+scenario_data_type = TypeVar('scenario_data_type')
+scenario_data_jax_type = TypeVar("scenario_data_jax_type")
 
-class ScenariosNoLambda:
-    """
-    Base scenarios loader for CrafText environments without lambda-based generation.
+class JAXRepresentation(ABC, Generic[scenario_data_type, scenario_data_jax_type]):
+    """Abstract converter from Python scenario payloads to JAX payloads."""
 
-    This class handles loading and preparing scenario definitions according to a given
-    configuration, optionally using GPT-generated plans. It transforms the raw scenario
-    data into forms suitable for both Python-side iteration and JAX-based processing.
+    @abstractmethod
+    def convert(self, scenarios_data: scenario_data_type) -> scenario_data_jax_type:
+        """Convert scenario data object into JAX-ready representation.
 
-    Attributes
-    ----------
-    encode_model : Any
-        An instance of the model used to encode text instructions.
-    config : ScenariosConfig
-        The loaded configuration object containing environment settings and flags.
-    use_paraphrases : bool
-        Whether to use paraphrased variants of instructions (from configuration).
-    environment_key : int
-        Index selecting which base environment to use (0 for Classic, 1 otherwise).
-    n_instructions : int
-        Counter tracking how many instructions have been processed.
-    use_plans : bool
-        Whether to incorporate GPT-generated plans into the scenarios.
-    instruction_to_update_file : str
-        Path to the file where updated plans are stored.
-    all_scenario : List[Scenario]
-        Raw list of loaded scenario definitions.
-    scenario_data : Any
-        Prepared scenarios converted into the internal representation.
-    scenario_data_jax : Any
-        Scenarios converted into JAX-friendly arrays or pytrees.
-    """
-    
-    
-    def __init__(self, encode_model, config_name=None, use_plans=False):
+        Args:
+            scenarios_data: Scenario data in Python/native structures.
+
+        Returns:
+            BaseScenarioDataJAX: JAX-friendly scenario representation.
         """
-        Initialize the scenarios loader.
+        ...
 
-        Parameters
-        ----------
-        encode_model : Any
-            The text-encoding model instance used to embed instructions.
-        config_name : Optional[str]
-            The name of the configuration to load; if None, a default config is used.
-        use_plans : bool, default=False
-            Whether to enable use of precomputed GPT plans when preparing scenarios.
+
+class DefaultJAXRepresentation(JAXRepresentation[BaseScenarioData, BaseScenarioDataJAX]):
+    """Default converter for non-encoded scenario data."""
+
+    def convert(self, scenario_data: BaseScenarioData) -> BaseScenarioDataJAX:
+        """Convert base scenario data to JAX tensors.
+
+        Args:
+            scenario_data: Scenario data without instruction embeddings.
+
+        Returns:
+            BaseScenarioDataJAX: JAX-ready checkers and arguments.
         """
-        self.encode_model = encode_model
+        scenario_checker_jax = self._prepare_jax_checkers(scenario_data.scenario_checker)
         
-        self.config = ScenariosConfigLoader().load_config(config_name)
+        data = BaseScenarioDataJAX(
+            scenario_checker=scenario_checker_jax,
+            arguments=TargetState().stack(scenario_data.arguments),
+        )
         
-        self.use_paraphrases = self.config.use_parafrases
-        
-        self.environment_key = 0 if "Classic" in self.config.base_environment else 1
-        
-        self.n_instructions = 0
-        
-        self.use_plans = use_plans
-        self.instruction_to_update_file = plans_path
-        
-        self.all_scenario = self._load_scenarios(self.config)
-        
-        self.scenario_data = self._prepare_scenarios()
-        self.scenario_data_jax = self.scenarios_to_jax()
+        return data
+
+    def _prepare_jax_checkers(self, checkers_list: List[Scenarios]) -> jax.Array:
+        """Convert checker enums into integer JAX array.
+
+        Args:
+            checkers_list: Sequence of checker enum values.
+
+        Returns:
+            jax.Array: Integer checker ids.
+        """
+        logger.info("Preparing JAX checkers: %s", len(checkers_list))
+        return jnp.array(list(map(lambda x: x.value, checkers_list)))
+
+class BaseScenarioDataHandler(AbstractScenarioHandler):
+    """Load, expand, and preprocess raw scenario definitions."""
+
+    def __init__(self, scenario_processor: Type[ScenarioProcessor[object]], instruction_transformer: Type[AbstractInstructionTransformer], config_name: str) -> None:
+        """Build scenario data from config for one environment family.
+
+        Args:
+            scenario_processor: Processor class for instruction preprocessing.
+            instruction_transformer: Transformer class for instruction rewriting.
+            config_name: Scenario config name to load.
+        """
+        super().__init__()
+        self.scenario_processor: ScenarioProcessor[object] = scenario_processor()
+        self.instruction_transformer = instruction_transformer()
+        self.config: ScenariosConfig = self._load_config(config_name)
+        self.use_paraphrases: bool = self.config.use_parafrases
+        self.environment_key: int = self.config.environment_key
+        self.n_instructions: int = 0
+        self.instruction_to_update_file: str = plans_path  # This remains as a constant path for the plans
+        self._post_config_loaded()
+        self.all_scenario: ScenarioMap = self._load_scenarios(self.config)
+        self.scenario_data_factory: ScenarioDataFactory[ScenarioDataPayload] = self._resolve_scenario_data_factory()
+        self.scenario_data: ScenarioDataPayload = self._prepare_scenarios()
+
+    def _load_config(self, config_name: str) -> ScenariosConfig:
+        """Load validated scenario config for current handler.
+
+        Args:
+            config_name: Scenario config identifier.
+
+        Returns:
+            ScenariosConfig: Parsed config object.
+        """
+        return ScenariosConfigLoader().load_config(config_name)
+
+    def _post_config_loaded(self) -> None:
+        """Hook for subclasses to initialize extra config-derived fields."""
+        return
+
+    def _resolve_scenario_data_factory(self) -> ScenarioDataFactory[ScenarioDataPayload]:
+        """Select payload factory based on processor capabilities."""
+        if isinstance(self.scenario_processor, EncodedProcessor):
+            from craftext.environment.scenarious.encoded_support import EncodedScenarioData
+
+            return create_encoded_scenario_data_factory(
+                processor_provider=lambda: self.scenario_processor,
+                encoded_payload_cls=EncodedScenarioData,
+            )
+        return create_raw_scenario_data_factory(
+            processor_provider=lambda: self.scenario_processor,
+        )
 
     @property
-    def initial_instruction(self):
-        """Generates the default encoded instruction for initializing network parameters."""
-        return self.encode_model.encode(["None"])[:1]
+    def initial_instruction(self) -> object:
+        """Return one default processed instruction sample.
+
+        Returns:
+            object: Single-item processed instruction payload.
+        """
+        processed_items = self.scenario_processor.process(["None"])
+        return processed_items[:1]
     
 
-    def castom_initial_instruction(self, instruction):
-        """Generates the default encoded instruction for initializing network parameters."""
-        return self.encode_model.encode([instruction])[:1]
+    def castom_initial_instruction(self, instruction: str) -> object:
+        """Return one processed sample for a custom instruction.
 
-    def _load_scenarios(self, config):
-        """Loads scenarios from a specified configuration file."""
+        Args:
+            instruction: Raw instruction string.
+
+        Returns:
+            object: Single-item processed instruction payload.
+        """
+        processed_items = self.scenario_processor.process([instruction])
+        return processed_items[:1]
+
+    def _load_scenarios(self, config: ScenariosConfig) -> ScenarioMap:
+        """Load raw scenarios dictionary for config.
+
+        Args:
+            config: Parsed scenarios config.
+
+        Returns:
+            ScenarioMap: Raw scenario mapping.
+        """
         return load_scenarios(config)
 
-    def get_scenarios(self):
-        """Retrieves the processed scenario data."""
+    def get_scenarios(self) -> ScenarioDataPayload:
+        """Return processed scenario data structure.
+
+        Returns:
+            ScenarioDataPayload: Materialized scenario data contract.
+        """
+        
         return self.scenario_data
 
-    def encode(self, instruction):
-        """Encodes an instruction using the provided encoding model."""
-        return Tuple(self.encode_model.encode(instruction))
-
     
-    def _prepare_scenarios(self, add_original_instructions=False):
-        """
-        Prepares and encodes scenarios while considering paraphrases.
-        """
-        instructions_list, indices_list, checkers_data_dict = self.pairwise_instructions_and_checkers()
-
-        checkers_data_f = {key: [] for key in checkers_data_dict.keys()}
-        batch_size = 2
+    def _collect_scenario_rows(self) -> ScenarioRows:
+        """Expand scenario config entries into flat aligned row lists."""
+        instructions_list: List[str] = []
+        checker_indecies:  List[Scenarios] = []
+        arguments:         List[TargetState] = []
+        names:             List[str] = []
+        keys = list(self.all_scenario.keys())
         
-        logger.info(f"Initial number of instructions: {len(instructions_list)}")
+        for name in tqdm(keys):
+            entry = self.all_scenario[name]
+            current_instr = entry["instruction"]
+            current_checker_index = entry["scenario_checker"]
+            current_paraphrases = entry.get("instruction_paraphrases", [])
+            current_arguments = entry["arguments"]
+            instructions_list.append(current_instr)
+            checker_indecies.append(current_checker_index)
+            arguments.append(current_arguments)
+            names.append(name)
+            if self.use_paraphrases:
+                for para in current_paraphrases:
+                    names.append(f"{name}_PARA")
+                    instructions_list.append(para)
+                    checker_indecies.append(current_checker_index)
+                    arguments.append(current_arguments)
 
-        instructions_f, indices_f, embeddings_f, o_instruction_f = [], [], [], []
-
-        for i in tqdm(range(0, len(instructions_list), batch_size)):
-            batch_instructions = instructions_list[i:i + batch_size]
-            batch_indices = indices_list[i:i + batch_size]
-
-            batch_results = self._pairwise_with_embeddings(batch_instructions, batch_indices, checkers_data_dict, i)
-            instructions_f.extend(batch_results["instructions"])
-            indices_f.extend(batch_results["indices"])
-            embeddings_f.extend(batch_results["embeddings"])
-            o_instruction_f.extend(batch_results["o_instructions"])
-
-            for key in checkers_data_f.keys():
-                checkers_data_f[key].extend(batch_results["checkers_data"][key])
-                
-        # Binding to DataStruct
-        if add_original_instructions:
-            self.scenario_data = ScenarioDataO(
-            instructions_list=instructions_f,
-            scenario_checker=checkers_data_f["scenario_checker"],
-            arguments=checkers_data_f["arguments"],
-            str_check_lambda_list=checkers_data_f["str_check_lambda"],
-            scenario_names=[str(i) for i in indices_f],
-            indices_list=np.array(indices_f).reshape(-1, 1),
-            embeddings_list=np.array(embeddings_f) if embeddings_f else None,
-            original_instructions=o_instruction_f
-            )
-        else:
-            self.scenario_data = ScenarioData(
-            instructions_list=instructions_f,
-            scenario_checker=checkers_data_f["scenario_checker"],
-            arguments=checkers_data_f["arguments"],
-            str_check_lambda_list=checkers_data_f["str_check_lambda"],
-            scenario_names=[str(i) for i in indices_f],
-            indices_list=np.array(indices_f).reshape(-1, 1),
-            embeddings_list=np.array(embeddings_f) if embeddings_f else None
+        return ScenarioRows(
+            instructions_list=instructions_list,
+            checker_indices=checker_indecies,
+            arguments=arguments,
+            scenario_names=names,
         )
 
-        return self.scenario_data
+    def _prepare_scenarios(self) -> ScenarioDataPayload:
+        """Materialize scenario rows via selected payload factory.
 
+        Returns:
+            ScenarioDataPayload: Processed scenario data contract.
+        """
+        rows = self._collect_scenario_rows()
+        scenario_data = self.scenario_data_factory.build(rows)
+        is_encoded = isinstance(self.scenario_processor, EncodedProcessor)
+        logger.info("Prepared %s instructions (Encoded: %s)", len(rows.instructions_list), is_encoded)
+        return scenario_data
 
-    def encode_instructions(self, instructions):
-        encoded_instructions = self.encode_model.encode(instructions)
+class  JaxScenarioDataHandler(BaseScenarioDataHandler, Generic[scenario_data_jax_type]):
+    """Scenario handler with additional JAX conversion stage."""
+
+    def __init__(self, scenario_processor: Type[ScenarioProcessor[object]], instruction_transformer: Type[AbstractInstructionTransformer], config_name: str, jax_representation_class: Type[JAXRepresentation[ScenarioDataPayload, scenario_data_jax_type]]) -> None:
+        """Create scenario handler with JAX representation stage.
+
+        Args:
+            scenario_processor: Processor class for instruction preprocessing.
+            instruction_transformer: Transformer class for instruction rewriting.
+            config_name: Scenario config name.
+            jax_representation_class: Converter class to JAX representation.
+        """
+        super().__init__(scenario_processor, instruction_transformer, config_name)
         
-        # There is possible, than self.encode_model retunrn different version of instructions-plans and related embeddings
-        num_variants = len(encoded_instructions) // len(instructions)
-       
-        assert len(encoded_instructions) == len(instructions) * num_variants, \
-            f"Unexpected size of encoded instructions ({len(encoded_instructions)} vs {len(instructions)}). Ensure encode_model is consistent."
+        self.jax_representation_converter: JAXRepresentation[ScenarioDataPayload, scenario_data_jax_type] = jax_representation_class()
+        self.scenario_data_jax: scenario_data_jax_type = self.scenarios_to_jax()
 
-        return encoded_instructions, instructions, num_variants
-        
-    def _pairwise_with_embeddings(self, batch_instructions, batch_indices, checkers_data_dict, base_idx):
+    def scenarios_to_jax(self) -> scenario_data_jax_type:
+        """Convert loaded scenario data to JAX-friendly structures.
+
+        Returns:
+            scenario_data_jax_type: JAX scenario payload.
         """
-        Encodes a batch of instructions and processes extracted data.
-        """
-        old_instructions = batch_instructions
-        encoded_instructions, batch_instructions, num_variants = self.encode_instructions(batch_instructions)
+        return self.jax_representation_converter.convert(self.scenario_data)
 
-        batch_results = {
-            "instructions": [],
-            "indices": [],
-            "embeddings": [],
-            "o_instructions": [],
-            "checkers_data": {key: [] for key in checkers_data_dict.keys()}
-        }
+def create_scenarios_with_dataset(use_plans_gpt: bool) -> Type[JaxScenarioDataHandler[BaseScenarioDataJAX]]:
+    """Factory producing a scenario handler class with selected transformer.
 
-        for j, instruction in enumerate(old_instructions):
-            for k in range(num_variants):
-                variant_index = j * num_variants + k
-                batch_results["indices"].append(batch_indices[j])
-                batch_results["o_instructions"].append(instruction)
-                batch_results["instructions"].append(batch_instructions[variant_index])
-                batch_results["embeddings"].append(encoded_instructions[variant_index])
+    Args:
+        use_plans_gpt: If ``True``, use plans transformer; otherwise default.
 
-                for field in checkers_data_dict.keys():
-                    batch_results["checkers_data"][field].append(checkers_data_dict[field][base_idx + j])
-
-        return batch_results
-
-    
-    def pairwise_instructions_and_checkers(self):
-        """
-        Loads and processes scenarios based on the SCENARIO_SCHEMA.
-        Return 3 lists - instructions_list, checkers_data_dict, indices_list
-        instructions_list - all instruction, including parafrased vesions
-        checkers_data_dict - all variable connected with checker to each instruction, len(checkers_data_dict[key]) == len(instructions_list)
-        indices_list - indices of instrictions
-        
-        """
-        instructions_list, indices_list = [], []
-        checkers_data_dict = {key: [] for key in SCENARIO_SCHEMA.keys() if key != "instruction_paraphrases" and key != "instruction"}
-
-        for idx, (key, scenario) in tqdm(enumerate(self.all_scenario.items())):
-            instructions, indices, checkers_data = self._pairwise_goal_parafrases_and_checkers(scenario, idx)
-
-            instructions_list.extend(instructions)
-            indices_list.extend(indices)
-
-            for field in checkers_data_dict.keys():
-                checkers_data_dict[field].extend(checkers_data[field])
-                
-        # Change instructions to plans if necessary
-        if self.use_plans:
-            instructions_list = self._load_action_plans(instructions_list)
-        return instructions_list, indices_list, checkers_data_dict
-    
-
-    def _pairwise_goal_parafrases_and_checkers(self, scenario, scenario_id):
-        """
-        Processes a single scenario based on the SCENARIO_SCHEMA.
-        """
-        
-        instructions = [scenario.get("instruction", "Unknown instruction")]
-        
-        if self.use_paraphrases:
-            instructions += scenario.get("instruction_paraphrases", [])
-
-        indices = [scenario_id] * len(instructions)
-        
-        checkers_data = {key: [] for key in SCENARIO_SCHEMA.keys() if key != "instruction_paraphrases" and key != "instruction"}
-
-        for key, field_type in SCENARIO_SCHEMA.items():
-            if field_type == ScenarioFieldType.REPEAT_WITH_PARAPHRASES:
-                checkers_data[key] = [scenario.get(key, None)] * len(instructions)
-        
-        return instructions, indices, checkers_data
-
-    def _load_action_plans(self, instructions_list):
-        """
-        Loads action plans from a predefined file and updates instructions if applicable.
-        """
-        with open(self.instruction_to_update_file, 'r', encoding='utf-8') as f:
-            action_plans = json.load(f)
-
-        updated_instructions = [action_plans.get(instr, "none") for instr in instructions_list]
-        
-        logger.info("Using preloaded plans in craftext_scenarios.py")
-        logger.info("Encoding instructions...")        
-        return updated_instructions
-
-
-    def scenarios_to_jax(self):
-        """
-        Converts scenario data to JAX-compatible structures.
-        """
-        embeddings_jax = jnp.array(self.scenario_data.embeddings_list) if self.scenario_data.embeddings_list is not None else None
-        
-        scenario_checker_jax = self._prepare_jax_checkers(self.scenario_data.scenario_checker)
-        
-        logger.info(f"Final number of instructions: {len(self.scenario_data.embeddings_list)}")
-
-        return ScenarioDataJAX(
-            embeddings_list=embeddings_jax,
-            scenario_checker=scenario_checker_jax,
-            arguments=self.scenario_data.arguments
-            
-        )
-
-    def _prepare_jax_checkers(self, checkers_list):
-        """
-        Prepares the scenario checkers list for JAX.
-        """
-        return jnp.array(checkers_list) if checkers_list else None
-
-
-
-def create_scenarios_with_dataset(use_plans_gpt):
-
+    Returns:
+        Type[JaxScenarioDataHandler]: Configured handler class.
     """
-    Factory for creating a custom Scenarios class configured to use or ignore GPT-generated plans.
 
-    Parameters
-    ----------
-    use_plans_gpt : bool
-        Flag indicating whether to enable GPT-generated plan usage in the scenarios.
+    class CustomCrafTextScenariosWithPlans(JaxScenarioDataHandler):
+        """Concrete scenario handler class with fixed transformer strategy."""
 
-    Returns
-    -------
-    CustomCrafTextScenariosWithPlans : Type[ScenariosNoLambda]
-        A subclass of ScenariosNoLambda whose initializer passes the `use_plans_gpt` flag
-        through to its superclass, so that instances of this class will respect the
-        `use_plans` configuration as specified.
-    """
-    
-    class CustomCrafTextScenariosWithPlans(ScenariosNoLambda):
-        def __init__(self, encode_model, config_name):
-            super().__init__(encode_model, config_name=config_name, use_plans=use_plans_gpt)
+        def __init__(self, scenario_processor: Type[ScenarioProcessor[object]], config_name: str) -> None:
+            """Initialize configured inner scenario handler.
+
+            Args:
+                scenario_processor: Processor class for instructions.
+                config_name: Scenario config name.
+            """
+            instruction_transformer: Type[AbstractInstructionTransformer] = PlansInstructionTransformer if use_plans_gpt else DefaultInstructionTransformer
+            super().__init__(scenario_processor, instruction_transformer, jax_representation_class=DefaultJAXRepresentation, config_name=config_name)
     return CustomCrafTextScenariosWithPlans

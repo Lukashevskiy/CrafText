@@ -1,7 +1,13 @@
-from typing import List, Tuple, Optional, Union
-import jax.numpy as jnp
+"""State dataclasses and extraction helpers for Craftax classic mode."""
+
+from typing import List
 from flax import struct
+import jax.numpy as jnp
 import jax
+
+
+from craftax.craftax_classic.envs.craftax_state import Mobs, EnvState
+from craftax.craftax_classic.constants import Action
 
 @struct.dataclass
 class PlayerVariables:
@@ -19,6 +25,7 @@ class PlayerVariables:
     light_level: float
     state_rng: jax.Array
     timestep: int
+    light_level: jax.Array 
     
 @struct.dataclass
 class PlayerAchievements:
@@ -65,11 +72,14 @@ class PlayerState:
     inventory: PlayerInventory
     map: GameMap
     action: int
-
+    zombies: Mobs
+    skeletons: Mobs
+    cows: Mobs
+    
     @classmethod
-    def from_state(cls, state, action):
+    def from_state(cls, state: EnvState, action: Action):
         variables = PlayerVariables(
-            player_position=jnp.array(state.player_position) if hasattr(state, 'player_position') else None,
+            player_position=state.player_position,
             player_direction=state.player_direction,
             player_health=state.player_health,
             player_food=state.player_food,
@@ -118,18 +128,23 @@ class PlayerState:
         game_map = GameMap(
             game_map=jnp.array(state.map) if hasattr(state, 'map') else None
         )
-
+        zombies = state.zombies
+        skeletons = state.skeletons
+        cows = state.cows
         return cls(
             variables=variables,
             achievements=achievements,
             inventory=inventory,
             map=game_map,
-            action=action
+            action=action,
+            zombies=zombies,
+            skeletons=skeletons,
+            cows=cows
         )
 
 @struct.dataclass
 class GameDataClassic:
-    states: list
+    states: List[PlayerState]
 
     @classmethod
     def from_state(cls, previos_state, current_state, action):

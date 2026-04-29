@@ -1,4 +1,5 @@
 from craftext.environment.craftext_constants import BlockType
+from craftext.environment.scenarious.scenario_types import ScenarioMap
 from craftext.environment.scenarious.checkers.target_state import BuildLineState as AchievmentClass
 from craftext.environment.scenarious.checkers.target_state import TargetState
 from craftext.environment.craftext_constants import Scenarios
@@ -34,7 +35,7 @@ def create_target_state(block_type:BlockType, size:int, is_diagonal:bool):
     target_achievements = AchievmentClass(block_type=block_type.value, size=size, is_diagonal=is_diagonal, radius=10)
     return TargetState(building_line=target_achievements)
 
-easy = {
+easy: ScenarioMap = {
     "INSTRUCTION_CRAFTING_TABLE_2": {
         "instruction": "Make a line of 2 blocks using table.",
         "scenario_checker": Scenarios.BUILD_LINE,
@@ -207,7 +208,7 @@ easy = {
 }
 
 
-medium = {
+medium: ScenarioMap = {
     "INSTRUCTION_STONE_2": {
         "instruction": "create a diagonal line of stones of size two.",
         "scenario_checker": Scenarios.BUILD_LINE,

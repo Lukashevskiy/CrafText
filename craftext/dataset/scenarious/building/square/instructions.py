@@ -1,4 +1,5 @@
 from craftext.environment.scenarious.checkers.target_state import TargetState, BuildSquareState
+from craftext.environment.scenarious.scenario_types import ScenarioMap
 from craftext.environment.craftext_constants import Scenarios, BlockType
 
 def create_target_state(block_type:BlockType, size:int):
@@ -7,7 +8,7 @@ def create_target_state(block_type:BlockType, size:int):
 
 
 
-easy = {
+easy: ScenarioMap = {
     "INSTRUCTION_STONE_4": {
         "instruction": "Create a square out of stone, each side of size 4",
         "scenario_checker": Scenarios.BUILD_SQUARE,
@@ -80,7 +81,7 @@ easy = {
     }
 }
 
-medium = {
+medium: ScenarioMap = {
     "INSTRUCTION_CRAFTING_TABLE_3": {
         "instruction": "Form a square of crafting tables with each side having a length of 3",
         "scenario_checker": Scenarios.BUILD_SQUARE,

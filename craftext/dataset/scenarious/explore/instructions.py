@@ -1,4 +1,5 @@
 
+from craftext.environment.scenarious.scenario_types import ScenarioMap
 from craftext.environment.scenarious.checkers.target_state import Achievements, TargetState
 from craftext.environment.craftext_constants import Achievement, Scenarios, AchievementState
 
@@ -13,7 +14,7 @@ def create_target_state(required=[], forbidden=[]):
     return TargetState(achievements=target_achievements)
 
 
-easy = {
+easy: ScenarioMap = {
 "EXPLORE":{
     "instruction": "Explore the environment",
     "instruction_paraphrases":  [
@@ -46,4 +47,4 @@ easy = {
   }
 }
 
-medium = {}
+medium: ScenarioMap = {}

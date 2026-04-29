@@ -1,4 +1,5 @@
 from craftext.environment.scenarious.checkers.target_state import TargetState, ConditionalPlacingState
+from craftext.environment.scenarious.scenario_types import ScenarioMap
 from craftext.environment.craftext_constants import InventoryItems, BlockType, MediumInventoryItems, Scenarios
 # one = {
 #     'simple_conditional_placing_001': {
@@ -29,7 +30,7 @@ def create_target_state(object_inventory_enum, object_to_place, count_to_collect
     target_achievements = ConditionalPlacingState(object_inventory_enum.value, object_to_place.value, count_to_collect, count_to_stand)
     return TargetState(conditional_placing=target_achievements)
 
-easy = {
+easy: ScenarioMap = {
     "INSTRUCTION_PLACE_IRON_FURNACE_4_3": {
         "instruction": "Collect 4 iron and place 3 furnace",
         "scenario_checker": Scenarios.CONDITIONAL_PLACING,
@@ -227,7 +228,7 @@ easy = {
 }
 
 
-medium = {
+medium: ScenarioMap = {
     "INSTRUCTION_PLACE_SAPPHIRE_FURNACE_3_5": {
         "instruction": "[MEDIUM] COLLECT 3 SAPPHIRE AND PLACE 5 FURNACE",
         "scenario_checker": Scenarios.CONDITIONAL_PLACING,

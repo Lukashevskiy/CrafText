@@ -15,10 +15,9 @@ class DistilBertEncode(EncodeModel):
         self.form_to_use = form_to_use
         model_name = "distilbert-base-uncased"
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=".")
-        self.model = AutoModel.from_pretrained(model_name, cache_dir=".").cuda()
-        self.n_splits=n_splits
-        if self.n_splits>1:
-            exit()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = AutoModel.from_pretrained(model_name, cache_dir=".").to(self.device)
+        self.n_splits = n_splits
         self.stopwords = {"a", "an", "the", "in", "on", "at", "by", "to", "for", "of", "with", "and", "or", "but", "so"}  # Пример списка предлогов
 
     def encode(self, instruction: Union[str, Sequence[str], None]) -> np.ndarray:
@@ -45,11 +44,11 @@ class DistilBertEncode(EncodeModel):
         """
         Generates a single embedding by concatenating embeddings of all tokens.
         """
-        inputs = self.tokenizer(instruction, return_tensors='pt', truncation=True, padding=True)
+        inputs = self.tokenizer(instruction, return_tensors='pt', truncation=True, padding=True).to(self.device)
         with torch.no_grad():
             outputs = self.model(**inputs)
         token_embeddings = outputs.last_hidden_state
-        return token_embeddings.view(-1).numpy()
+        return token_embeddings.view(-1).cpu().numpy()
 
     def get_concatenated_embeddings_no_stopwords(self, instruction: str) -> np.ndarray:
         """
@@ -57,27 +56,24 @@ class DistilBertEncode(EncodeModel):
         """
         tokens = self.tokenizer.tokenize(instruction)
         filtered_tokens = [t for t in tokens if t.lower() not in self.stopwords]
-        inputs = self.tokenizer(filtered_tokens, return_tensors='pt', is_split_into_words=True)
+        inputs = self.tokenizer(filtered_tokens, return_tensors='pt', is_split_into_words=True).to(self.device)
         with torch.no_grad():
             outputs = self.model(**inputs)
         token_embeddings = outputs.last_hidden_state
-        return token_embeddings.view(-1).numpy()
+        return token_embeddings.view(-1).cpu().numpy()
     
     def get_cls_embeddings(self, instructions: Union[str, Sequence[str], None]) -> np.ndarray:
-        # print("Encode...")
         inputs = self.tokenizer(
                 instructions, 
                 return_tensors='pt', 
                 truncation=True, 
                 padding=True, 
                 max_length=50
-            ).to("cuda")
+            ).to(self.device)
         with torch.no_grad():
                 outputs = self.model(**inputs)
-        # print("Finish.")
         cls_embeddings = outputs.last_hidden_state[:, 0, :]  
         concatenated_embedding = cls_embeddings.cpu().numpy() 
-        # print(concatenated_embedding.shape)
         return concatenated_embedding
 
     def get_embeddings(self, instruction: Union[str, Sequence[str], None]) -> np.ndarray:
@@ -105,12 +101,10 @@ class DistilBertEncode(EncodeModel):
                 truncation=True, 
                 padding=True, 
                 max_length=50
-            )
-            print("Start")
+            ).to(self.device)
             # 3. Обрабатываем все части батчем
             with torch.no_grad():
                 outputs = self.model(**inputs)
-            print("End")
 
             # 4. Извлекаем CLS-векторы для всех частей
             cls_embeddings = outputs.last_hidden_state[:, 0, :]  # CLS токен каждой части

@@ -36,4 +36,6 @@ include = ["craftext*"]
 "craftext" = [
   "dataset/configs/**/*.yaml",
   "dataset/scenarious/**/*.py",
+  "world_presets/**/*.yaml",
+  "world_presets/**/*.md",
 ]

@@ -1,4 +1,5 @@
 
+from craftext.environment.scenarious.scenario_types import ScenarioMap
 from craftext.environment.scenarious.checkers.target_state import Achievements, TargetState
 from craftext.environment.craftext_constants import Achievement, Scenarios, AchievementState
 
@@ -12,7 +13,7 @@ def create_target_state(required=[], forbidden=[]):
     target_achievements = Achievements(achievement_mask=tuple(base_vector))
     return TargetState(achievements=target_achievements)
 
-easy = {
+easy: ScenarioMap = {
     "PLACE_FURNACE_MAKE_IRON_SWORD_NO_MAKE_IRON_PICKAXE": {
         "instruction": "Place a furnace and craft an iron sword but do not make an iron pickaxe.",
         "instruction_paraphrases": [
@@ -210,4 +211,4 @@ first_easy_key = next(iter(easy))
 one = {first_easy_key: easy[first_easy_key]}
 
 
-medium = {}
+medium: ScenarioMap = {}

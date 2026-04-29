@@ -1,4 +1,5 @@
 from flax.struct import dataclass
+from craftext.environment.scenarious.scenario_types import ScenarioMap
 from craftext.environment.scenarious.checkers.target_state import TargetState, BuildStarState
 from craftext.environment.craftext_constants import Scenarios, BlockType, CrossType
 
@@ -7,7 +8,7 @@ def create_target_state(block_type:BlockType, size:int, cross_type:CrossType):
     return TargetState(building_star=target_achievements)
 
 
-easy = {
+easy: ScenarioMap = {
     "INSTRUCTION_PLANT_5": {
         "instruction": "Form a cross with Plant elements, each side should be 5 units long and in diagonal shape.",
         "scenario_checker": Scenarios.BUILD_STAR,
@@ -179,7 +180,7 @@ easy = {
     }
 }
 
-medium = {
+medium: ScenarioMap = {
     "INSTRUCTION_PLANT3": {
         "instruction": "Can you verify if there is a cross made up of plants with a side length of 3 and forms a diagonal shape?",
         "scenario_checker": Scenarios.BUILD_STAR,

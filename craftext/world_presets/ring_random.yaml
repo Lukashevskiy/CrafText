@@ -1,0 +1,5 @@
+preset: ring_random
+env_name: Craftax-Classic-Pixels-v1
+map_size: 64
+ring_inner_radius: 0
+ring_outer_radius: 12

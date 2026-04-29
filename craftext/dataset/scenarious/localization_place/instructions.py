@@ -1,4 +1,5 @@
 from craftext.environment.scenarious.checkers.target_state import TargetState, LocalizaPlacingState
+from craftext.environment.scenarious.scenario_types import ScenarioMap
 from craftext.environment.craftext_constants import Scenarios, BlockType
 
 def create_target_state(object_inventory_enum, object_to_place, count_to_collect, count_to_stand):
@@ -35,7 +36,7 @@ def create_target_state(object_inventory_enum, object_to_place, count_to_collect
 #         'complexity': "easy-pease"
 #     },
 #       }
-easy = {
+easy: ScenarioMap = {
     "INSTRUCTION_PLACE_STONE_FURNACE_1_1": {
         "instruction": "Place a stone one block to the left of the furnace.",
         "scenario_checker": Scenarios.LOCALIZATION_PLACE,
@@ -1514,7 +1515,7 @@ easy = {
     }
 }
 
-medium = {
+medium: ScenarioMap = {
     "INSTRUCTION_PLACE_STONE_FURNACE_1_2": {
         "instruction": "Place the stone two blocks to the left of the furnace.",
         "scenario_checker": Scenarios.LOCALIZATION_PLACE,

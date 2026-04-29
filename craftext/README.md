@@ -30,3 +30,4 @@ Canonical dataset layout after refactor:
   - `building_line`
   - `building.line`
 - If `test: true` and `test.py` is absent, falls back to `instructions.py`
+- Dataset package can be overridden via `CRAFTEXT_DATASET_PACKAGE` (useful for caged/forked package names)

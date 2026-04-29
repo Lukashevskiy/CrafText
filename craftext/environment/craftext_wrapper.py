@@ -228,7 +228,7 @@ class BaseInstructionWrapper(Generic[ObsT, EnvStateT, InfoT], ABC):
                     lambda: reward / 50,
                     lambda: reward
                 )
-       # reward = jax.lax.cond(instruction_done, lambda _: reward + 1, lambda _: reward, operand=None)
+        reward = jax.lax.cond(instruction_done, lambda _: reward + 1, lambda _: reward, operand=None)
         done = instruction_done | done
    
         new_episode_sr = env_state.success_rate + jnp.float32(instruction_done)

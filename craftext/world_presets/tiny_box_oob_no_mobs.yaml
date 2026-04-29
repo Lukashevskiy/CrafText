@@ -1,4 +1,13 @@
 preset: box
+generator: box
+map_behaviors:
+  - solid_blocks
+character_behaviors:
+  - starting_inventory
+  - starting_intrinsics
+  - intrinsic_dynamics
+recovery_behaviors:
+  - instant_recovery
 env_name: Craftax-Classic-Pixels-v1
 map_size: 64
 seed: 7

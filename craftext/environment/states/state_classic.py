@@ -9,6 +9,11 @@ import jax
 from craftax.craftax_classic.envs.craftax_state import Mobs, EnvState
 from craftax.craftax_classic.constants import Action
 
+
+def _zero_inventory_value() -> jax.Array:
+    """Return a scalar zero for inventory fields absent in classic Craftax."""
+    return jnp.asarray(0)
+
 @struct.dataclass
 class PlayerVariables:
     player_position: jax.Array
@@ -112,17 +117,18 @@ class PlayerState:
             wood_sword=state.inventory.wood_sword,
             stone_sword=state.inventory.stone_sword,
             iron_sword=state.inventory.iron_sword,
-            # Just for jax for correct invemtory check
-            pickaxe=state.inventory.iron,
-            sword=state.inventory.iron,
-            bow=state.inventory.iron,
-            arrows=state.inventory.iron,
-            armour=state.inventory.iron,
-            torches=state.inventory.iron,
-            ruby=state.inventory.iron,
-            sapphire=state.inventory.iron,
-            potions=state.inventory.iron,
-            books=state.inventory.iron,
+            # Classic Craftax has no generic/full-mode equipment slots.
+            # Missing fields must stay zero rather than mirroring unrelated resources.
+            pickaxe=_zero_inventory_value(),
+            sword=_zero_inventory_value(),
+            bow=_zero_inventory_value(),
+            arrows=_zero_inventory_value(),
+            armour=_zero_inventory_value(),
+            torches=_zero_inventory_value(),
+            ruby=_zero_inventory_value(),
+            sapphire=_zero_inventory_value(),
+            potions=_zero_inventory_value(),
+            books=_zero_inventory_value(),
         )
 
         game_map = GameMap(

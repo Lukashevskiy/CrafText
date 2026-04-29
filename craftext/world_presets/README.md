@@ -6,6 +6,15 @@
 
 ```yaml
 preset: box
+generator: box
+map_behaviors:
+  - solid_blocks
+character_behaviors:
+  - starting_inventory
+  - starting_intrinsics
+  - intrinsic_dynamics
+recovery_behaviors:
+  - instant_recovery
 env_name: Craftax-Classic-Pixels-v1
 map_size: 64
 seed: 123
@@ -68,6 +77,10 @@ map_rules:
 
 - `preset`: `default`, `random`, `fixed`, `ring_random`, `ring_fixed`, `ring`, `box`, `box3_random_trees`
 - `env_name` или `base_environment`
+- `generator`: `box`, `ring` или `none`
+- `map_behaviors`
+- `character_behaviors`
+- `recovery_behaviors`
 - `seed`
 - `map_size`
 - `blocked_block`
@@ -88,6 +101,8 @@ map_rules:
 Замечания:
 
 - `env_name` в YAML не переключает активный env, а только валидирует совместимость. Источник истины для env остаётся `--env` или `base_environment` из scenario config.
+- canonical-конфиг теперь должен явно объявлять `generator` и списки `*_behaviors`.
+- implicit legacy-вывод generator/behaviors из наличия полей для YAML больше не поддерживается.
 - preset применяется как overlay к `state` внутри `reset`, после чего обычный `Craftax.step(...)` продолжает игру уже из модифицированного состояния.
 - если `map_size` не указан, используется обычный `make_craftax_env_from_name(...)`, как в `verl-agent-craftext`.
 
@@ -95,6 +110,7 @@ map_rules:
 
 ```yaml
 extends: box3_random_trees
+generator: box
 seed: 7
 perimeter_tree_prob: 1.0
 ```
@@ -103,6 +119,7 @@ perimeter_tree_prob: 1.0
 
 ```yaml
 preset: ring
+generator: ring
 ring_inner_radius: 2
 ring_outer_radius: 8
 blocked_block: water
@@ -166,9 +183,18 @@ starting_inventory:
   - `stop_rest_after_recovery`
 - если `instant_sleep_recovery: true`, то при сне можно сразу восстановить энергию до нужного значения за один шаг
 
+Замечания по `generator` и `*_behaviors`:
+
+- `generator` явно выбирает map generation pipeline
+- `map_behaviors` явно выбирает map policies, например `solid_blocks`
+- `character_behaviors` явно выбирает стартовые и step-time модификации персонажа
+- `recovery_behaviors` явно выбирает recovery policies
+- для train это лучше, чем неявный вывод поведения из наличия полей, потому что config становится декларативным и стабильным
+- если YAML использует `map_rules`, `starting_inventory`, `starting_intrinsics`, `intrinsic_*` или `recovery_rules`, то соответствующий `*_behaviors` должен быть объявлен явно
+
 Замечания по `map_rules`:
 
-- это отдельный adapter для коллизий по карте, без патча `craftax`
+- это отдельный adapter для map overlay и коллизий по карте, без патча `craftax`
 - полезные ключи:
   - `solid_out_of_bounds`
   - `solid_blocks`

@@ -1,4 +1,5 @@
 preset: box3_random_trees
+generator: box
 env_name: Craftax-Classic-Pixels-v1
 map_size: 64
 seed: 123

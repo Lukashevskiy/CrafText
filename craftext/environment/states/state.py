@@ -5,6 +5,11 @@ import jax.numpy as jnp
 from flax import struct
 import jax
 
+
+def _zero_inventory_value() -> jax.Array:
+    """Return a scalar zero for inventory fields missing in the backend state."""
+    return jnp.asarray(0)
+
 @struct.dataclass
 class PlayerVariables:
     player_position: jax.Array 
@@ -138,13 +143,14 @@ class PlayerState:
                 potions=jnp.array(state.inventory.potions),
                 books=jnp.array(state.inventory.books),
                 
-                # Just for jax for correct invemtory check (conditional tasks)
-                wood_pickaxe=jnp.array(state.inventory.pickaxe),
-                stone_pickaxe=jnp.array(state.inventory.sword),
-                iron_pickaxe=jnp.array(state.inventory.bow),
-                wood_sword=jnp.array(state.inventory.arrows),
-                stone_sword=jnp.array(state.inventory.armour),
-                iron_sword=jnp.array(state.inventory.torches),
+                # Full Craftax exposes generic equipment counts, not tier-specific classic slots.
+                # Keep missing classic-only fields at zero instead of aliasing unrelated items.
+                wood_pickaxe=_zero_inventory_value(),
+                stone_pickaxe=_zero_inventory_value(),
+                iron_pickaxe=_zero_inventory_value(),
+                wood_sword=_zero_inventory_value(),
+                stone_sword=_zero_inventory_value(),
+                iron_sword=_zero_inventory_value(),
             )
 
         game_map = GameMap(

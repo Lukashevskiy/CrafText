@@ -295,11 +295,15 @@ def main() -> None:
         env_name=env_name,
         preset_name=preset_name,
         seed=args.seed,
-        map_size=args.map_size,
-        ring_inner_radius=args.ring_inner_radius,
-        ring_outer_radius=args.ring_outer_radius,
-        box_inner_size=args.box_inner_size,
-        perimeter_tree_prob=args.perimeter_tree_prob,
+        env={
+            "map_size": args.map_size,
+        },
+        map={
+            "ring_inner_radius": args.ring_inner_radius,
+            "ring_outer_radius": args.ring_outer_radius,
+            "box_inner_size": args.box_inner_size,
+            "perimeter_tree_prob": args.perimeter_tree_prob,
+        },
     )
 
     obs_dim, block_pixel_size_human, inventory_obs_height, action_enum, achievement_enum, render_fn = (

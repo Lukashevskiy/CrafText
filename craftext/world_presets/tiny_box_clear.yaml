@@ -1,4 +1,8 @@
 extends: box3_random_trees
-seed: 7
-box_inner_size: 3
-perimeter_tree_prob: 0.0
+env:
+  seed: 7
+map:
+  generator:
+    config:
+      inner_size: 3
+      perimeter_tree_prob: 0.0

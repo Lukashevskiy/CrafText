@@ -23,8 +23,6 @@ from craftext.environment.scenarious.processors import RawProcessor
 from craftext.environment.world_presets import (
     build_env_and_params,
     build_world_preset_spec,
-    looks_like_env_name,
-    normalize_craftax_env_name,
 )
 
 warnings.filterwarnings("ignore")
@@ -79,20 +77,23 @@ ACTION_KEY_SPECS = (
     (pygame.K_SEMICOLON, "ENCHANT_BOW"),
 )
 
+def _resolve_explicit_play_env_name(value: str) -> str:
+    stripped_value = value.strip()
+    if stripped_value.startswith("Craftax-"):
+        return stripped_value
+
+    resolved_base_env = resolve_base_environment(stripped_value)
+    return "Craftax-Classic-Pixels-v1" if resolved_base_env.family == "classic" else "Craftax-Pixels-v1"
+
+
 def resolve_play_env_name(
     config: ScenariosConfig,
     env_override: Optional[str],
-    world_preset_override: Optional[str],
 ) -> str:
     """Resolve the environment name used for manual play."""
     if env_override:
-        return normalize_craftax_env_name(env_override)
-
-    preset_value = world_preset_override or config.world_preset
-    if preset_value and looks_like_env_name(preset_value):
-        return normalize_craftax_env_name(preset_value)
-
-    return normalize_craftax_env_name(config.base_environment)
+        return _resolve_explicit_play_env_name(env_override)
+    return _resolve_explicit_play_env_name(config.base_environment)
 
 
 def load_rendering_runtime(env_name: str) -> Tuple[Any, Any, Any, Any, Any, Any]:
@@ -226,7 +227,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--world-preset",
         default=None,
-        help="World preset name or env id. Supported builtins: default, random, fixed, ring_random, ring_fixed, ring, box, box3_random_trees.",
+        help="World preset YAML name under craftext/world_presets, for example tiny_box_oob_no_mobs or ring_random.",
     )
     parser.add_argument(
         "--seed",
@@ -285,25 +286,37 @@ def main() -> None:
     env_name = resolve_play_env_name(
         config=config,
         env_override=args.env,
-        world_preset_override=args.world_preset,
     )
-    preset_name = None
-    if args.world_preset and not looks_like_env_name(args.world_preset):
-        preset_name = args.world_preset
+    preset_name = args.world_preset or config.world_preset
+
+    map_section: Dict[str, Any] = {}
+    if args.ring_inner_radius is not None or args.ring_outer_radius is not None:
+        map_section["generator"] = {
+            "name": "ring",
+            "config": {
+                "inner_radius": 0 if args.ring_inner_radius is None else args.ring_inner_radius,
+                "outer_radius": 12 if args.ring_outer_radius is None else args.ring_outer_radius,
+            },
+        }
+    elif args.box_inner_size is not None or args.perimeter_tree_prob is not None:
+        map_section["generator"] = {
+            "name": "box",
+            "config": {
+                "inner_size": 3 if args.box_inner_size is None else args.box_inner_size,
+                "perimeter_tree_prob": 0.7 if args.perimeter_tree_prob is None else args.perimeter_tree_prob,
+            },
+        }
 
     world_preset_spec = build_world_preset_spec(
         env_name=env_name,
         preset_name=preset_name,
         seed=args.seed,
-        env={
-            "map_size": args.map_size,
+        systems={
+            "static_env": {
+                "map_size": args.map_size,
+            },
         },
-        map={
-            "ring_inner_radius": args.ring_inner_radius,
-            "ring_outer_radius": args.ring_outer_radius,
-            "box_inner_size": args.box_inner_size,
-            "perimeter_tree_prob": args.perimeter_tree_prob,
-        },
+        map=map_section,
     )
 
     obs_dim, block_pixel_size_human, inventory_obs_height, action_enum, achievement_enum, render_fn = (
@@ -324,23 +337,25 @@ def main() -> None:
     logger.info("Config base_environment: %s", config.base_environment)
     logger.info("Resolved env: %s", env_name)
     logger.info("World preset: %s", world_preset_spec.name)
-    logger.info("World seed: %s", world_preset_spec.seed)
-    if world_preset_spec.map_size is not None:
-        logger.info("World map_size: %s", world_preset_spec.map_size)
-    if world_preset_spec.has_ring:
+    logger.info("World seed: %s", world_preset_spec.env.seed)
+    if world_preset_spec.systems.static_env.map_size is not None:
+        logger.info("World map_size: %s", world_preset_spec.systems.static_env.map_size)
+    if world_preset_spec.map.generator_name == "ring":
+        ring_config = world_preset_spec.map.generator_config
         logger.info(
             "World ring: inner=%s outer=%s",
-            world_preset_spec.ring_inner_radius,
-            world_preset_spec.ring_outer_radius,
+            getattr(ring_config, "inner_radius", None),
+            getattr(ring_config, "outer_radius", None),
         )
-    if world_preset_spec.has_box:
+    if world_preset_spec.map.generator_name == "box":
+        box_config = world_preset_spec.map.generator_config
         logger.info(
             "World box: inner_size=%s perimeter_tree_prob=%s",
-            world_preset_spec.box_inner_size,
-            world_preset_spec.perimeter_tree_prob,
+            getattr(box_config, "inner_size", None),
+            getattr(box_config, "perimeter_tree_prob", None),
         )
 
-    base_rng = jax.random.PRNGKey(world_preset_spec.seed)
+    base_rng = jax.random.PRNGKey(world_preset_spec.env.seed)
     rng = base_rng
 
     _, env_state = wrapper.reset(base_rng, env_params, instruction_idx=args.instruction_idx)
@@ -375,8 +390,7 @@ def main() -> None:
             renderer.render(env_state=env_state, env_name=env_name)
 
             if done:
-                reset_rng = base_rng if world_preset_spec.name in {"fixed", "ring_fixed"} else _rng
-                _, env_state = wrapper.reset(reset_rng, env_params, instruction_idx=args.instruction_idx)
+                _, env_state = wrapper.reset(_rng, env_params, instruction_idx=args.instruction_idx)
                 renderer.render(env_state=env_state, env_name=env_name)
 
         renderer.update()

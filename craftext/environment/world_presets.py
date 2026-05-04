@@ -1,10 +1,10 @@
 """World preset helpers for CrafText/Craftax runtime."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import importlib
 import inspect
 import pathlib
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Mapping, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -15,24 +15,7 @@ from craftax.craftax_env import make_craftax_env_from_name
 from craftext.environment.scenarious.loader import resolve_base_environment
 
 WORLD_PRESET_CONFIG_DIR_NAME = "world_presets"
-BUILTIN_PRESET_ALIASES = {
-    "ring": "ring_random",
-    "ring_random": "ring_random",
-    "ring_fixed": "ring_fixed",
-    "box": "box",
-    "box3": "box3_random_trees",
-    "box3_random_trees": "box3_random_trees",
-    "boxed_3x3_random_trees": "box3_random_trees",
-}
-BUILTIN_PRESET_NAMES = {
-    "default",
-    "random",
-    "fixed",
-    "ring_random",
-    "ring_fixed",
-    "box",
-    "box3_random_trees",
-}
+ROOT_PRESET_SECTION_NAMES = ("env", "map", "systems")
 
 
 @dataclass(frozen=True)
@@ -76,75 +59,113 @@ class EnvPresetSpec:
     Attributes:
         env_name: Concrete Craftax environment id.
         seed: Seed used for preset construction and resets.
-        map_size: Optional static square map size override.
-        disable_mob_spawns: Whether to zero-out spawn probabilities in env params.
     """
 
     env_name: str
     seed: int
+
+
+@dataclass(frozen=True)
+class StaticEnvSpec:
+    """Static environment limits and dimensions."""
+
     map_size: Optional[Tuple[int, int]] = None
-    disable_mob_spawns: Optional[bool] = None
 
 
 @dataclass(frozen=True)
-class MapPresetSpec:
-    """Map generation and map-behavior configuration.
+class EnvParamsSpec:
+    """Env params overrides applied before runtime starts."""
 
-    Attributes:
-        generator: Registered generator name such as ``box`` or ``ring``.
-        behaviors: Registered map behavior names to apply after generation.
-        blocked_block: Block name used outside generated playable area.
-        floor_block: Block name used for playable floor cells.
-        perimeter_block: Block name used for box perimeter placement.
-        rules: Rule mapping consumed by map behaviors.
-        ring_inner_radius: Inner radius for ring generation.
-        ring_outer_radius: Outer radius for ring generation.
-        box_inner_size: Side length for box generation.
-        perimeter_tree_prob: Sampling probability for perimeter decoration.
-    """
+    overrides: Tuple[InventoryGrantSpec, ...] = ()
 
-    generator: Optional[str] = None
+
+@dataclass(frozen=True)
+class SpawnPolicySpec:
+    """Spawn-related runtime controls."""
+
+    disable_mob_spawns: bool = False
+
+
+@dataclass(frozen=True)
+class MovementPolicySpec:
+    """Movement and collision policies applied after env steps."""
+
     behaviors: Tuple[str, ...] = ()
-    blocked_block: Optional[str] = None
-    floor_block: Optional[str] = None
-    perimeter_block: Optional[str] = None
     rules: Tuple[InventoryGrantSpec, ...] = ()
-    ring_inner_radius: Optional[int] = None
-    ring_outer_radius: Optional[int] = None
-    box_inner_size: Optional[int] = None
-    perimeter_tree_prob: Optional[float] = None
 
 
 @dataclass(frozen=True)
-class CharacterPresetSpec:
-    """Character reset and dynamics configuration.
-
-    Attributes:
-        behaviors: Registered character behavior names.
-        starting_inventory: Inventory overrides applied on reset.
-        starting_intrinsics: Direct state-field overrides applied on reset.
-        intrinsic_rates: Post-step intrinsic delta configuration.
-        intrinsic_thresholds: Threshold configuration for intrinsic dynamics.
-    """
+class ResetPolicySpec:
+    """Reset-time state initialization policies."""
 
     behaviors: Tuple[str, ...] = ()
     starting_inventory: Tuple[InventoryGrantSpec, ...] = ()
     starting_intrinsics: Tuple[InventoryGrantSpec, ...] = ()
-    intrinsic_rates: Tuple[InventoryGrantSpec, ...] = ()
-    intrinsic_thresholds: Tuple[InventoryGrantSpec, ...] = ()
 
 
 @dataclass(frozen=True)
-class RecoveryPresetSpec:
-    """Recovery policy configuration.
-
-    Attributes:
-        behaviors: Registered recovery behavior names.
-        rules: Rule mapping consumed by recovery behaviors.
-    """
+class StepPolicySpec:
+    """Post-step dynamics and recovery policies."""
 
     behaviors: Tuple[str, ...] = ()
+    intrinsic_rates: Tuple[InventoryGrantSpec, ...] = ()
+    intrinsic_thresholds: Tuple[InventoryGrantSpec, ...] = ()
     rules: Tuple[InventoryGrantSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class SystemsPresetSpec:
+    """Cross-cutting systems configuration separated from world shape.
+
+    Attributes:
+        static_env: Static environment dimensions and limits.
+        env_params: Direct overrides for Craftax env params.
+        spawn: Spawn-related runtime controls.
+        movement: Movement and collision policies.
+        reset: Reset-time state initialization policies.
+        step: Post-step dynamics and recovery policies.
+    """
+
+    static_env: StaticEnvSpec = field(default_factory=StaticEnvSpec)
+    env_params: EnvParamsSpec = field(default_factory=EnvParamsSpec)
+    spawn: SpawnPolicySpec = field(default_factory=SpawnPolicySpec)
+    movement: MovementPolicySpec = field(default_factory=MovementPolicySpec)
+    reset: ResetPolicySpec = field(default_factory=ResetPolicySpec)
+    step: StepPolicySpec = field(default_factory=StepPolicySpec)
+
+
+@dataclass(frozen=True)
+class BoxGeneratorSpec:
+    """Configuration for a boxed playable area generator."""
+
+    inner_size: int
+    perimeter_tree_prob: Optional[float] = None
+    blocked_block: Optional[str] = None
+    floor_block: Optional[str] = None
+    perimeter_block: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RingGeneratorSpec:
+    """Configuration for a ring-shaped playable area generator."""
+
+    inner_radius: int
+    outer_radius: int
+    blocked_block: Optional[str] = None
+    floor_block: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class MapPresetSpec:
+    """Map generation entrypoint.
+
+    Attributes:
+        generator_name: Registered generator name such as ``box`` or ``ring``.
+        generator_config: Generator-specific config payload.
+    """
+
+    generator_name: Optional[str] = None
+    generator_config: BoxGeneratorSpec | RingGeneratorSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -152,122 +173,16 @@ class WorldPresetSpec:
     """Resolved top-level world preset configuration.
 
     Attributes:
-        name: User-facing preset name or builtin alias.
-        env_name: Compatibility field mirroring ``env.env_name``.
-        seed: Compatibility field mirroring ``env.seed``.
+        name: User-facing preset name or ``inline`` for ad-hoc section input.
         env: Environment-specific preset settings.
-        map: Map generation and collision-policy settings.
-        character: Character reset and dynamics settings.
-        recovery: Recovery behavior settings.
+        map: Map generation settings.
+        systems: Cross-cutting runtime systems and policy settings.
     """
 
     name: str
-    env_name: str
-    seed: int
     env: EnvPresetSpec
     map: MapPresetSpec
-    character: CharacterPresetSpec
-    recovery: RecoveryPresetSpec
-
-    @property
-    def has_ring(self) -> bool:
-        return self.map.generator == "ring"
-
-    @property
-    def has_box(self) -> bool:
-        return self.map.generator == "box"
-
-    @property
-    def has_map_overlay(self) -> bool:
-        return self.map.generator is not None
-
-    @property
-    def uses_map_adapter(self) -> bool:
-        return self.has_map_overlay or bool(self.map.behaviors)
-
-    @property
-    def uses_character_adapter(self) -> bool:
-        return bool(self.character.behaviors)
-
-    @property
-    def uses_recovery_adapter(self) -> bool:
-        return bool(self.recovery.behaviors)
-
-    @property
-    def generator(self) -> Optional[str]:
-        return self.map.generator
-
-    @property
-    def map_behaviors(self) -> Tuple[str, ...]:
-        return self.map.behaviors
-
-    @property
-    def character_behaviors(self) -> Tuple[str, ...]:
-        return self.character.behaviors
-
-    @property
-    def recovery_behaviors(self) -> Tuple[str, ...]:
-        return self.recovery.behaviors
-
-    @property
-    def map_size(self) -> Optional[Tuple[int, int]]:
-        return self.env.map_size
-
-    @property
-    def disable_mob_spawns(self) -> Optional[bool]:
-        return self.env.disable_mob_spawns
-
-    @property
-    def blocked_block(self) -> Optional[str]:
-        return self.map.blocked_block
-
-    @property
-    def floor_block(self) -> Optional[str]:
-        return self.map.floor_block
-
-    @property
-    def perimeter_block(self) -> Optional[str]:
-        return self.map.perimeter_block
-
-    @property
-    def map_rules(self) -> Tuple[InventoryGrantSpec, ...]:
-        return self.map.rules
-
-    @property
-    def ring_inner_radius(self) -> Optional[int]:
-        return self.map.ring_inner_radius
-
-    @property
-    def ring_outer_radius(self) -> Optional[int]:
-        return self.map.ring_outer_radius
-
-    @property
-    def box_inner_size(self) -> Optional[int]:
-        return self.map.box_inner_size
-
-    @property
-    def perimeter_tree_prob(self) -> Optional[float]:
-        return self.map.perimeter_tree_prob
-
-    @property
-    def starting_inventory(self) -> Tuple[InventoryGrantSpec, ...]:
-        return self.character.starting_inventory
-
-    @property
-    def starting_intrinsics(self) -> Tuple[InventoryGrantSpec, ...]:
-        return self.character.starting_intrinsics
-
-    @property
-    def intrinsic_rates(self) -> Tuple[InventoryGrantSpec, ...]:
-        return self.character.intrinsic_rates
-
-    @property
-    def intrinsic_thresholds(self) -> Tuple[InventoryGrantSpec, ...]:
-        return self.character.intrinsic_thresholds
-
-    @property
-    def recovery_rules(self) -> Tuple[InventoryGrantSpec, ...]:
-        return self.recovery.rules
+    systems: SystemsPresetSpec
 
 
 def get_world_preset_config_dir() -> pathlib.Path:
@@ -278,22 +193,16 @@ def get_world_preset_config_dir() -> pathlib.Path:
 
 
 def _find_world_preset_config_path(preset_name: str) -> pathlib.Path:
+    """Resolve one preset config path strictly relative to the preset directory."""
     config_dir = get_world_preset_config_dir()
-    direct = config_dir / f"{preset_name}.yaml"
-    if direct.exists():
-        return direct
-
-    slash_path = config_dir / f"{preset_name.replace('.', '/')}.yaml"
-    if slash_path.exists():
-        return slash_path
-
-    matches = list(config_dir.glob(f"**/{preset_name}.yaml"))
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        raise FileExistsError(f"Multiple world preset configs named {preset_name}.yaml found: {matches}")
-
-    raise FileNotFoundError(f"World preset config {preset_name} not found under {config_dir}")
+    raw_path = pathlib.Path(preset_name)
+    config_path = raw_path if raw_path.suffix == ".yaml" else raw_path.with_suffix(".yaml")
+    resolved_path = (config_dir / config_path).resolve()
+    if config_dir.resolve() not in resolved_path.parents:
+        raise ValueError(f"World preset config path must stay inside {config_dir}: {preset_name}")
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"World preset config {preset_name} not found at {resolved_path}")
+    return resolved_path
 
 
 def _load_world_preset_config(preset_name: str) -> dict[str, object]:
@@ -309,51 +218,82 @@ def _load_world_preset_config(preset_name: str) -> dict[str, object]:
     return dict(config_data)
 
 
-def looks_like_env_name(value: Optional[str]) -> bool:
-    if not value:
-        return False
-    lowered = value.lower()
-    return lowered.startswith("craftax") or lowered in {
-        "classic",
-        "classic_pixels",
-        "classic-symbolic",
-        "classic_symbolic",
-        "full",
-        "full_pixels",
-        "pixels",
-        "symbolic",
-        "full-symbolic",
-        "full_symbolic",
+def _as_section(value: Optional[Mapping[str, Any]], *, field_name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise TypeError(f"World preset '{field_name}' section must be a mapping")
+    return dict(value)
+
+
+def _child_section(section: Mapping[str, Any], key: str, *, parent_name: str) -> dict[str, Any]:
+    return _as_section(section.get(key), field_name=f"{parent_name}.{key}")
+
+
+def _check_allowed_keys(section_name: str, data: Mapping[str, Any], allowed_keys: set[str]) -> None:
+    unknown = sorted(set(data.keys()) - allowed_keys)
+    if unknown:
+        raise ValueError(f"Unknown keys in world preset '{section_name}' section: {unknown}")
+
+
+def _merge_sections(
+    base: Mapping[str, Any],
+    override: Mapping[str, Any],
+    *,
+    section_name: Optional[str] = None,
+) -> dict[str, Any]:
+    if not isinstance(base, Mapping):
+        raise TypeError(f"World preset '{section_name or 'section'}' base value must be a mapping")
+    if not isinstance(override, Mapping):
+        raise TypeError(f"World preset '{section_name or 'section'}' override value must be a mapping")
+
+    merged = dict(base)
+    for key, override_value in override.items():
+        base_value = merged.get(key)
+        if isinstance(base_value, Mapping) and isinstance(override_value, Mapping):
+            child_name = f"{section_name}.{key}" if section_name else key
+            merged[key] = _merge_sections(base_value, override_value, section_name=child_name)
+        else:
+            merged[key] = override_value
+    return merged
+
+
+def _merge_root_sections(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for section_name in ROOT_PRESET_SECTION_NAMES:
+        base_section = base.get(section_name, {})
+        override_section = override.get(section_name, {})
+        if base_section or override_section:
+            merged[section_name] = _merge_sections(base_section, override_section, section_name=section_name)
+    return merged
+
+
+def _extract_root_sections(data: Mapping[str, Any], *, parent_name: str) -> dict[str, dict[str, Any]]:
+    return {
+        section_name: _child_section(data, section_name, parent_name=parent_name)
+        for section_name in ROOT_PRESET_SECTION_NAMES
     }
 
 
-def normalize_craftax_env_name(value: str) -> str:
-    """Normalize user/config environment string into one Craftax env id."""
-    normalized = value.strip()
-    lowered = normalized.lower()
-
-    alias_map = {
-        "classic": "Craftax-Classic-Pixels-v1",
-        "classic_pixels": "Craftax-Classic-Pixels-v1",
-        "classic-symbolic": "Craftax-Classic-Symbolic-v1",
-        "classic_symbolic": "Craftax-Classic-Symbolic-v1",
-        "full": "Craftax-Pixels-v1",
-        "pixels": "Craftax-Pixels-v1",
-        "full_pixels": "Craftax-Pixels-v1",
-        "symbolic": "Craftax-Symbolic-v1",
-        "full-symbolic": "Craftax-Symbolic-v1",
-        "full_symbolic": "Craftax-Symbolic-v1",
+def _inline_root_sections(
+    *,
+    env: Optional[Mapping[str, Any]],
+    map: Optional[Mapping[str, Any]],
+    systems: Optional[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    return {
+        "env": _as_section(env, field_name="env"),
+        "map": _as_section(map, field_name="map"),
+        "systems": _as_section(systems, field_name="systems"),
     }
-    if lowered in alias_map:
-        return alias_map[lowered]
 
-    if normalized.endswith("-Text"):
-        normalized = normalized[:-5]
 
-    if normalized == "Classic":
-        return "Craftax-Classic-Pixels-v1"
+def _registry_from_pairs(*pairs: tuple[str, Any]) -> dict[str, Any]:
+    return dict(pairs)
 
-    return normalized
+
+def _registry_from_named_types(*types_: type[Any], name_attr: str) -> dict[str, type[Any]]:
+    return {getattr(type_, name_attr): type_ for type_ in types_}
 
 
 def _normalize_map_size(map_size: Optional[int | Tuple[int, int]]) -> Optional[Tuple[int, int]]:
@@ -364,16 +304,16 @@ def _normalize_map_size(map_size: Optional[int | Tuple[int, int]]) -> Optional[T
     return (int(map_size[0]), int(map_size[1]))
 
 
-def _normalize_inventory_grants(starting_inventory: Any) -> Tuple[InventoryGrantSpec, ...]:
-    if starting_inventory is None:
+def _normalize_grants(raw_mapping: Any, *, field_name: str) -> Tuple[InventoryGrantSpec, ...]:
+    if raw_mapping is None:
         return ()
-    if not isinstance(starting_inventory, dict):
-        raise TypeError("World preset 'starting_inventory' must be a mapping")
+    if not isinstance(raw_mapping, dict):
+        raise TypeError(f"World preset '{field_name}' must be a mapping")
 
     grants: list[InventoryGrantSpec] = []
-    for item_name, raw_value in starting_inventory.items():
+    for item_name, raw_value in raw_mapping.items():
         if not isinstance(item_name, str) or not item_name.strip():
-            raise TypeError("World preset inventory item names must be non-empty strings")
+            raise TypeError(f"World preset '{field_name}' item names must be non-empty strings")
 
         probability = 1.0
         value = raw_value
@@ -385,34 +325,18 @@ def _normalize_inventory_grants(starting_inventory: Any) -> Tuple[InventoryGrant
             probability = raw_value.get("probability", 1.0)
 
         if value is None:
-            raise ValueError(f"World preset inventory item {item_name} must define 'value' or 'count'")
+            raise ValueError(f"World preset '{field_name}' item {item_name} must define 'value' or 'count'")
         probability = float(probability)
         if probability < 0.0 or probability > 1.0:
-            raise ValueError(f"World preset inventory item {item_name} probability must be in [0, 1]")
+            raise ValueError(f"World preset '{field_name}' item {item_name} probability must be in [0, 1]")
 
         grants.append(InventoryGrantSpec(item=item_name.strip(), value=value, probability=probability))
 
     return tuple(grants)
 
 
-def _normalize_named_grants(raw_mapping: Any, field_name: str) -> Tuple[InventoryGrantSpec, ...]:
-    if raw_mapping is None:
-        return ()
-    if not isinstance(raw_mapping, dict):
-        raise TypeError(f"World preset '{field_name}' must be a mapping")
-    return _normalize_inventory_grants(raw_mapping)
-
-
 def _grants_to_mapping(grants: Tuple[InventoryGrantSpec, ...]) -> dict[str, Any]:
     return {grant.item: grant.value for grant in grants}
-
-
-def _normalize_builtin_preset_name(preset_name: Optional[str]) -> str:
-    normalized_preset = (preset_name or "default").strip().lower()
-    normalized_preset = BUILTIN_PRESET_ALIASES.get(normalized_preset, normalized_preset)
-    if normalized_preset not in BUILTIN_PRESET_NAMES:
-        return "default"
-    return normalized_preset
 
 
 def _normalize_name_list(raw_value: Any, *, field_name: str) -> Tuple[str, ...]:
@@ -427,109 +351,294 @@ def _normalize_name_list(raw_value: Any, *, field_name: str) -> Tuple[str, ...]:
     return tuple(normalized)
 
 
-def _derive_generator_name(
-    *,
-    explicit_generator: Optional[str],
-    normalized_preset: str,
-) -> Optional[str]:
-    if explicit_generator is not None:
-        normalized = explicit_generator.strip().lower()
-        if normalized in {"", "none", "default"}:
-            return None
-        return normalized
-    if normalized_preset in {"box", "box3_random_trees"}:
-        return "box"
-    if normalized_preset.startswith("ring_"):
-        return "ring"
-    return None
+def _normalize_generator_name(raw_value: Any) -> Optional[str]:
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, str):
+        raise TypeError("World preset map.generator must be a string")
+    normalized = raw_value.strip().lower()
+    if normalized in {"", "none", "default"}:
+        return None
+    if normalized not in {"box", "ring"}:
+        raise ValueError(f"Unsupported world preset generator: {raw_value}")
+    return normalized
 
 
-def _derive_map_behavior_names(
-    *,
-    explicit_names: Optional[Any],
-    map_rules: Any,
-) -> Tuple[str, ...]:
-    if explicit_names is not None:
-        return _normalize_name_list(explicit_names, field_name="map_behaviors")
-    return ("solid_blocks",) if map_rules else ()
+def _resolve_seed(seed_value: Optional[Any]) -> int:
+    if seed_value is None:
+        return int(np.random.randint(0, 2**31 - 1))
+    if not isinstance(seed_value, int):
+        raise TypeError("World preset env.seed must be int")
+    return int(seed_value)
 
 
-def _derive_character_behavior_names(
-    *,
-    explicit_names: Optional[Any],
-    starting_inventory: Any,
-    starting_intrinsics: Any,
-    intrinsic_rates: Any,
-    intrinsic_thresholds: Any,
-) -> Tuple[str, ...]:
-    if explicit_names is not None:
-        return _normalize_name_list(explicit_names, field_name="character_behaviors")
-
-    names: list[str] = []
-    if starting_inventory:
-        names.append("starting_inventory")
-    if starting_intrinsics:
-        names.append("starting_intrinsics")
-    if intrinsic_rates or intrinsic_thresholds:
-        names.append("intrinsic_dynamics")
-    return tuple(names)
+def _validate_movement_policy_contracts(*, preset_name: str, movement_spec: MovementPolicySpec) -> None:
+    if movement_spec.rules and not movement_spec.behaviors:
+        raise ValueError(f"World preset {preset_name}: systems.movement.rules requires explicit movement behaviors")
 
 
-def _derive_recovery_behavior_names(
-    *,
-    explicit_names: Optional[Any],
-    recovery_rules: Any,
-) -> Tuple[str, ...]:
-    if explicit_names is not None:
-        return _normalize_name_list(explicit_names, field_name="recovery_behaviors")
-    return ("instant_recovery",) if recovery_rules else ()
+def _validate_reset_policy_contracts(*, preset_name: str, reset_spec: ResetPolicySpec) -> None:
+    if reset_spec.starting_inventory and "starting_inventory" not in reset_spec.behaviors:
+        raise ValueError(
+            f"World preset {preset_name}: systems.reset.starting_inventory requires 'starting_inventory' behavior"
+        )
+    if reset_spec.starting_intrinsics and "starting_intrinsics" not in reset_spec.behaviors:
+        raise ValueError(
+            f"World preset {preset_name}: systems.reset.starting_intrinsics requires 'starting_intrinsics' behavior"
+        )
 
 
-def _validate_explicit_config_api(
+def _has_recovery_rules(step_spec: StepPolicySpec) -> bool:
+    return any(
+        grant.item.startswith(("instant_", "sleep_", "rest_", "wake_", "stop_"))
+        for grant in step_spec.rules
+    )
+
+
+def _validate_step_policy_contracts(*, preset_name: str, step_spec: StepPolicySpec) -> None:
+    if (step_spec.intrinsic_rates or step_spec.intrinsic_thresholds) and "intrinsic_dynamics" not in step_spec.behaviors:
+        raise ValueError(
+            f"World preset {preset_name}: systems.step intrinsic fields require 'intrinsic_dynamics' behavior"
+        )
+    if _has_recovery_rules(step_spec) and "instant_recovery" not in step_spec.behaviors:
+        raise ValueError(
+            f"World preset {preset_name}: systems.step.rules recovery entries require 'instant_recovery' behavior"
+        )
+
+
+def _validate_behavior_contracts(*, preset_name: str, systems_spec: SystemsPresetSpec) -> None:
+    _validate_movement_policy_contracts(preset_name=preset_name, movement_spec=systems_spec.movement)
+    _validate_reset_policy_contracts(preset_name=preset_name, reset_spec=systems_spec.reset)
+    _validate_step_policy_contracts(preset_name=preset_name, step_spec=systems_spec.step)
+
+
+def _validate_env_compatibility(
     *,
     preset_name: str,
-    generator: Optional[str],
-    map_behaviors: Tuple[str, ...],
-    character_behaviors: Tuple[str, ...],
-    recovery_behaviors: Tuple[str, ...],
-    ring_inner_radius: Optional[int],
-    ring_outer_radius: Optional[int],
-    box_inner_size: Optional[int],
-    perimeter_tree_prob: Optional[float],
-    starting_inventory: Any,
-    starting_intrinsics: Any,
-    intrinsic_rates: Any,
-    intrinsic_thresholds: Any,
-    recovery_rules: Any,
-    map_rules: Any,
+    env_section: Mapping[str, Any],
+    expected_env_name: str,
 ) -> None:
-    if generator is None and any(
-        value is not None
-        for value in (ring_inner_radius, ring_outer_radius, box_inner_size, perimeter_tree_prob)
-    ):
+    declared_env_name = env_section.get("env_name")
+    if declared_env_name is None:
+        return
+
+    declared_env_name_str = str(declared_env_name).strip()
+    expected_env_name_str = expected_env_name.strip()
+    if declared_env_name_str != expected_env_name_str:
         raise ValueError(
-            f"World preset {preset_name}: generator-specific map fields require explicit 'generator'"
+            f"World preset {preset_name} expects env.env_name={declared_env_name_str}, "
+            f"but the active env is {expected_env_name_str}. "
+            "Presets overlay the selected base environment and do not override it."
         )
-    if map_rules and not map_behaviors:
-        raise ValueError(
-            f"World preset {preset_name}: 'map_rules' requires explicit 'map_behaviors'"
+
+
+def _build_env_spec(section: Mapping[str, Any], *, default_env_name: str, default_seed: Optional[int]) -> EnvPresetSpec:
+    _check_allowed_keys("env", section, {"env_name", "seed"})
+    resolved_seed = _resolve_seed(section.get("seed", default_seed))
+    resolved_env_name = str(section.get("env_name", default_env_name)).strip()
+    return EnvPresetSpec(env_name=resolved_env_name, seed=resolved_seed)
+
+
+def _build_box_generator_config(config_section: Mapping[str, Any]) -> BoxGeneratorSpec:
+    _check_allowed_keys(
+        "map.generator.config",
+        config_section,
+        {"inner_size", "perimeter_tree_prob", "blocked_block", "floor_block", "perimeter_block"},
+    )
+    return BoxGeneratorSpec(
+        inner_size=int(config_section["inner_size"]),
+        perimeter_tree_prob=(
+            None
+            if config_section.get("perimeter_tree_prob") is None
+            else float(config_section["perimeter_tree_prob"])
+        ),
+        blocked_block=(
+            None if config_section.get("blocked_block") is None else str(config_section["blocked_block"])
+        ),
+        floor_block=(
+            None if config_section.get("floor_block") is None else str(config_section["floor_block"])
+        ),
+        perimeter_block=(
+            None if config_section.get("perimeter_block") is None else str(config_section["perimeter_block"])
+        ),
+    )
+
+
+def _build_ring_generator_config(config_section: Mapping[str, Any]) -> RingGeneratorSpec:
+    _check_allowed_keys(
+        "map.generator.config",
+        config_section,
+        {"inner_radius", "outer_radius", "blocked_block", "floor_block"},
+    )
+    return RingGeneratorSpec(
+        inner_radius=int(config_section["inner_radius"]),
+        outer_radius=int(config_section["outer_radius"]),
+        blocked_block=(
+            None if config_section.get("blocked_block") is None else str(config_section["blocked_block"])
+        ),
+        floor_block=(
+            None if config_section.get("floor_block") is None else str(config_section["floor_block"])
+        ),
+    )
+
+
+MAP_GENERATOR_CONFIG_BUILDERS: dict[str, Callable[[Mapping[str, Any]], BoxGeneratorSpec | RingGeneratorSpec]] = _registry_from_pairs(
+    ("box", _build_box_generator_config),
+    ("ring", _build_ring_generator_config),
+)
+
+
+def _build_named_config(
+    name: Optional[str],
+    config_section: Mapping[str, Any],
+    registry: Mapping[str, Callable[[Mapping[str, Any]], Any]],
+    *,
+    config_name: str,
+) -> Any:
+    if name is None:
+        if config_section:
+            raise ValueError(f"World preset {config_name} requires a matching name")
+        return None
+    builder = _resolve_registry_entry(registry, name, registry_name=f"{config_name} builder")
+    return builder(config_section)
+
+
+def _build_map_spec(section: Mapping[str, Any]) -> MapPresetSpec:
+    _check_allowed_keys("map", section, {"generator"})
+    generator_section = _child_section(section, "generator", parent_name="map")
+
+    generator_name: Optional[str] = None
+    generator_config: BoxGeneratorSpec | RingGeneratorSpec | None = None
+
+    if generator_section:
+        _check_allowed_keys("map.generator", generator_section, {"name", "config"})
+        generator_name = _normalize_generator_name(generator_section.get("name"))
+        config_section = _child_section(generator_section, "config", parent_name="map.generator")
+        generator_config = _build_named_config(
+            generator_name,
+            config_section,
+            MAP_GENERATOR_CONFIG_BUILDERS,
+            config_name="map.generator.config",
         )
-    if starting_inventory and "starting_inventory" not in character_behaviors:
-        raise ValueError(
-            f"World preset {preset_name}: 'starting_inventory' requires 'starting_inventory' in 'character_behaviors'"
-        )
-    if starting_intrinsics and "starting_intrinsics" not in character_behaviors:
-        raise ValueError(
-            f"World preset {preset_name}: 'starting_intrinsics' requires 'starting_intrinsics' in 'character_behaviors'"
-        )
-    if (intrinsic_rates or intrinsic_thresholds) and "intrinsic_dynamics" not in character_behaviors:
-        raise ValueError(
-            f"World preset {preset_name}: intrinsic fields require 'intrinsic_dynamics' in 'character_behaviors'"
-        )
-    if recovery_rules and not recovery_behaviors:
-        raise ValueError(
-            f"World preset {preset_name}: 'recovery_rules' requires explicit 'recovery_behaviors'"
-        )
+    return MapPresetSpec(generator_name=generator_name, generator_config=generator_config)
+
+
+def _build_static_env_spec(section: Mapping[str, Any]) -> StaticEnvSpec:
+    _check_allowed_keys("systems.static_env", section, {"map_size"})
+    return StaticEnvSpec(map_size=_normalize_map_size(section.get("map_size")))
+
+
+def _build_env_params_spec(section: Mapping[str, Any]) -> EnvParamsSpec:
+    _check_allowed_keys("systems.env_params", section, {"overrides"})
+    return EnvParamsSpec(
+        overrides=_normalize_grants(section.get("overrides"), field_name="systems.env_params.overrides")
+    )
+
+
+def _build_spawn_policy_spec(section: Mapping[str, Any]) -> SpawnPolicySpec:
+    _check_allowed_keys("systems.spawn", section, {"disable_mob_spawns"})
+    return SpawnPolicySpec(disable_mob_spawns=bool(section.get("disable_mob_spawns", False)))
+
+
+def _build_movement_policy_spec(section: Mapping[str, Any]) -> MovementPolicySpec:
+    _check_allowed_keys("systems.movement", section, {"behaviors", "rules"})
+    return MovementPolicySpec(
+        behaviors=_normalize_name_list(section.get("behaviors"), field_name="systems.movement.behaviors"),
+        rules=_normalize_grants(section.get("rules"), field_name="systems.movement.rules"),
+    )
+
+
+def _build_reset_policy_spec(section: Mapping[str, Any]) -> ResetPolicySpec:
+    _check_allowed_keys(
+        "systems.reset",
+        section,
+        {"behaviors", "starting_inventory", "starting_intrinsics"},
+    )
+    return ResetPolicySpec(
+        behaviors=_normalize_name_list(section.get("behaviors"), field_name="systems.reset.behaviors"),
+        starting_inventory=_normalize_grants(section.get("starting_inventory"), field_name="systems.reset.starting_inventory"),
+        starting_intrinsics=_normalize_grants(
+            section.get("starting_intrinsics"),
+            field_name="systems.reset.starting_intrinsics",
+        ),
+    )
+
+
+def _build_step_policy_spec(section: Mapping[str, Any]) -> StepPolicySpec:
+    _check_allowed_keys(
+        "systems.step",
+        section,
+        {"behaviors", "intrinsic_rates", "intrinsic_thresholds", "rules"},
+    )
+    return StepPolicySpec(
+        behaviors=_normalize_name_list(section.get("behaviors"), field_name="systems.step.behaviors"),
+        intrinsic_rates=_normalize_grants(section.get("intrinsic_rates"), field_name="systems.step.intrinsic_rates"),
+        intrinsic_thresholds=_normalize_grants(
+            section.get("intrinsic_thresholds"),
+            field_name="systems.step.intrinsic_thresholds",
+        ),
+        rules=_normalize_grants(section.get("rules"), field_name="systems.step.rules"),
+    )
+
+
+def _build_systems_spec(section: Mapping[str, Any]) -> SystemsPresetSpec:
+    _check_allowed_keys(
+        section_name="systems",
+        data=section,
+        allowed_keys={"static_env", "env_params", "spawn", "movement", "reset", "step"},
+    )
+    static_env_section = _child_section(section, "static_env", parent_name="systems")
+    env_params_section = _child_section(section, "env_params", parent_name="systems")
+    spawn_section = _child_section(section, "spawn", parent_name="systems")
+    movement_section = _child_section(section, "movement", parent_name="systems")
+    reset_section = _child_section(section, "reset", parent_name="systems")
+    step_section = _child_section(section, "step", parent_name="systems")
+
+    return SystemsPresetSpec(
+        static_env=_build_static_env_spec(static_env_section),
+        env_params=_build_env_params_spec(env_params_section),
+        spawn=_build_spawn_policy_spec(spawn_section),
+        movement=_build_movement_policy_spec(movement_section),
+        reset=_build_reset_policy_spec(reset_section),
+        step=_build_step_policy_spec(step_section),
+    )
+
+
+def _assemble_world_preset_spec(
+    *,
+    preset_name: str,
+    default_env_name: str,
+    default_seed: Optional[int],
+    env_section: Mapping[str, Any],
+    map_section: Mapping[str, Any],
+    systems_section: Mapping[str, Any],
+) -> WorldPresetSpec:
+    env_spec = _build_env_spec(env_section, default_env_name=default_env_name, default_seed=default_seed)
+    map_spec = _build_map_spec(map_section)
+    systems_spec = _build_systems_spec(systems_section)
+    _validate_behavior_contracts(
+        preset_name=preset_name,
+        systems_spec=systems_spec,
+    )
+    return WorldPresetSpec(
+        name=preset_name,
+        env=env_spec,
+        map=map_spec,
+        systems=systems_spec,
+    )
+
+
+def _resolve_config_sections(preset_name: str, config_data: Mapping[str, Any]) -> dict[str, Any]:
+    _check_allowed_keys("root", config_data, {"extends", *ROOT_PRESET_SECTION_NAMES})
+    extends_value = config_data.get("extends")
+    base_sections: dict[str, Any] = {}
+    if extends_value is not None:
+        if not isinstance(extends_value, str) or not extends_value.strip():
+            raise TypeError(f"World preset {preset_name}: 'extends' must be a non-empty string")
+        parent_name = extends_value.strip()
+        base_sections = _resolve_config_sections(parent_name, _load_world_preset_config(parent_name))
+    current_sections = _extract_root_sections(config_data, parent_name="root")
+    return _merge_root_sections(base_sections, current_sections)
 
 
 def build_world_preset_spec(
@@ -537,418 +646,34 @@ def build_world_preset_spec(
     env_name: str,
     preset_name: Optional[str],
     seed: Optional[int],
-    env: Optional[dict[str, Any]] = None,
-    map: Optional[dict[str, Any]] = None,
-    character: Optional[dict[str, Any]] = None,
-    recovery: Optional[dict[str, Any]] = None,
-    allow_config_lookup: bool = True,
-    derive_behavior_defaults: bool = True,
+    env: Optional[Mapping[str, Any]] = None,
+    map: Optional[Mapping[str, Any]] = None,
+    systems: Optional[Mapping[str, Any]] = None,
 ) -> WorldPresetSpec:
-    """Build a world preset spec from sectioned configuration inputs.
-
-    Args:
-        env_name: Base Craftax environment or alias.
-        preset_name: Builtin preset alias or YAML preset name.
-        seed: Optional explicit random seed.
-        env: Optional environment section override.
-        map: Optional map section override.
-        character: Optional character section override.
-        recovery: Optional recovery section override.
-        allow_config_lookup: Whether ``preset_name`` may resolve to YAML.
-        derive_behavior_defaults: Whether direct builder calls may derive behavior names.
-
-    Returns:
-        A fully normalized ``WorldPresetSpec``.
-    """
-    env = {} if env is None else dict(env)
-    map = {} if map is None else dict(map)
-    character = {} if character is None else dict(character)
-    recovery = {} if recovery is None else dict(recovery)
-
-    generator = map.get("generator")
-    map_behaviors = map.get("behaviors", map.get("map_behaviors"))
-    character_behaviors = character.get("behaviors", character.get("character_behaviors"))
-    recovery_behaviors = recovery.get("behaviors", recovery.get("recovery_behaviors"))
-    map_size = env.get("map_size")
-    blocked_block = map.get("blocked_block")
-    floor_block = map.get("floor_block")
-    perimeter_block = map.get("perimeter_block")
-    disable_mob_spawns = env.get("disable_mob_spawns")
-    starting_inventory = character.get("starting_inventory")
-    starting_intrinsics = character.get("starting_intrinsics")
-    intrinsic_rates = character.get("intrinsic_rates")
-    intrinsic_thresholds = character.get("intrinsic_thresholds")
-    recovery_rules = recovery.get("rules", recovery.get("recovery_rules"))
-    map_rules = map.get("rules", map.get("map_rules"))
-    ring_inner_radius = map.get("ring_inner_radius")
-    ring_outer_radius = map.get("ring_outer_radius")
-    box_inner_size = map.get("box_inner_size")
-    perimeter_tree_prob = map.get("perimeter_tree_prob")
-
-    if allow_config_lookup and preset_name and not looks_like_env_name(preset_name):
-        try:
-            preset_config = _load_world_preset_config(preset_name)
-        except FileNotFoundError:
-            preset_config = None
-        if preset_config is not None:
-            return build_world_preset_spec_from_config(
-                preset_name=preset_name,
-                config_data=preset_config,
-                fallback_env_name=env_name,
-                fallback_seed=seed,
-                fallback_generator=generator,
-                fallback_map_behaviors=map_behaviors,
-                fallback_character_behaviors=character_behaviors,
-                fallback_recovery_behaviors=recovery_behaviors,
-                fallback_map_size=map_size,
-                fallback_ring_inner_radius=ring_inner_radius,
-                fallback_ring_outer_radius=ring_outer_radius,
-                fallback_box_inner_size=box_inner_size,
-                fallback_perimeter_tree_prob=perimeter_tree_prob,
-            )
-
-    normalized_env_name = normalize_craftax_env_name(env_name)
-    normalized_preset = _normalize_builtin_preset_name(preset_name)
-    normalized_generator = (
-        _derive_generator_name(
-            explicit_generator=generator,
-            normalized_preset=normalized_preset,
-        )
-        if derive_behavior_defaults
-        else (None if generator is None else _derive_generator_name(explicit_generator=generator, normalized_preset="default"))
-    )
-    normalized_map_size = _normalize_map_size(map_size)
-
-    resolved_seed = int(seed) if seed is not None else (
-        1 if normalized_preset in {"fixed", "ring_fixed"} else int(np.random.randint(0, 2**31 - 1))
-    )
-
-    if normalized_generator == "ring":
-        ring_inner_radius = 0 if ring_inner_radius is None else int(ring_inner_radius)
-        ring_outer_radius = 12 if ring_outer_radius is None else int(ring_outer_radius)
-    else:
-        ring_inner_radius = None
-        ring_outer_radius = None
-
-    if normalized_generator == "box":
-        box_inner_size = 3 if box_inner_size is None else int(box_inner_size)
-        perimeter_tree_prob = 0.7 if perimeter_tree_prob is None else float(perimeter_tree_prob)
-        if disable_mob_spawns is None:
-            disable_mob_spawns = True
-    else:
-        box_inner_size = None
-        perimeter_tree_prob = None
-
-    if derive_behavior_defaults:
-        normalized_map_behaviors = _derive_map_behavior_names(
-            explicit_names=map_behaviors,
-            map_rules=map_rules,
-        )
-        normalized_character_behaviors = _derive_character_behavior_names(
-            explicit_names=character_behaviors,
-            starting_inventory=starting_inventory,
-            starting_intrinsics=starting_intrinsics,
-            intrinsic_rates=intrinsic_rates,
-            intrinsic_thresholds=intrinsic_thresholds,
-        )
-        normalized_recovery_behaviors = _derive_recovery_behavior_names(
-            explicit_names=recovery_behaviors,
-            recovery_rules=recovery_rules,
+    """Build a world preset spec from strict sectioned inputs."""
+    inline_sections = _inline_root_sections(env=env, map=map, systems=systems)
+    requested_name = (preset_name or "").strip()
+    if requested_name:
+        merged_sections = _merge_root_sections(
+            _resolve_config_sections(requested_name, _load_world_preset_config(requested_name)),
+            inline_sections,
         )
     else:
-        normalized_map_behaviors = _normalize_name_list(map_behaviors, field_name="map_behaviors")
-        normalized_character_behaviors = _normalize_name_list(
-            character_behaviors,
-            field_name="character_behaviors",
-        )
-        normalized_recovery_behaviors = _normalize_name_list(
-            recovery_behaviors,
-            field_name="recovery_behaviors",
-        )
-
-    env_spec = EnvPresetSpec(
-        env_name=normalized_env_name,
-        seed=resolved_seed,
-        map_size=normalized_map_size,
-        disable_mob_spawns=disable_mob_spawns,
+        merged_sections = inline_sections
+    resolved_sections = _extract_root_sections(merged_sections, parent_name="root")
+    env_section = resolved_sections["env"]
+    _validate_env_compatibility(
+        preset_name=requested_name or "inline",
+        env_section=env_section,
+        expected_env_name=env_name,
     )
-    map_spec = MapPresetSpec(
-        generator=normalized_generator,
-        behaviors=normalized_map_behaviors,
-        blocked_block=None if blocked_block is None else str(blocked_block),
-        floor_block=None if floor_block is None else str(floor_block),
-        perimeter_block=None if perimeter_block is None else str(perimeter_block),
-        rules=_normalize_named_grants(map_rules, "map_rules"),
-        ring_inner_radius=ring_inner_radius,
-        ring_outer_radius=ring_outer_radius,
-        box_inner_size=box_inner_size,
-        perimeter_tree_prob=perimeter_tree_prob,
-    )
-    character_spec = CharacterPresetSpec(
-        behaviors=normalized_character_behaviors,
-        starting_inventory=_normalize_inventory_grants(starting_inventory),
-        starting_intrinsics=_normalize_named_grants(starting_intrinsics, "starting_intrinsics"),
-        intrinsic_rates=_normalize_named_grants(intrinsic_rates, "intrinsic_rates"),
-        intrinsic_thresholds=_normalize_named_grants(intrinsic_thresholds, "intrinsic_thresholds"),
-    )
-    recovery_spec = RecoveryPresetSpec(
-        behaviors=normalized_recovery_behaviors,
-        rules=_normalize_named_grants(recovery_rules, "recovery_rules"),
-    )
-
-    return WorldPresetSpec(
-        name=normalized_preset,
-        env_name=normalized_env_name,
-        seed=resolved_seed,
-        env=env_spec,
-        map=map_spec,
-        character=character_spec,
-        recovery=recovery_spec,
-    )
-
-
-def build_world_preset_spec_from_config(
-    *,
-    preset_name: str,
-    config_data: dict[str, object],
-    fallback_env_name: str,
-    fallback_seed: Optional[int],
-    fallback_generator: Optional[str],
-    fallback_map_behaviors: Any,
-    fallback_character_behaviors: Any,
-    fallback_recovery_behaviors: Any,
-    fallback_map_size: Optional[int | Tuple[int, int]],
-    fallback_ring_inner_radius: Optional[int],
-    fallback_ring_outer_radius: Optional[int],
-    fallback_box_inner_size: Optional[int],
-    fallback_perimeter_tree_prob: Optional[float],
-) -> WorldPresetSpec:
-    """Build a preset spec from YAML configuration with inheritance support.
-
-    Args:
-        preset_name: Logical preset name being resolved.
-        config_data: Parsed YAML mapping for the preset.
-        fallback_env_name: Active environment name from caller context.
-        fallback_seed: Seed fallback from caller context.
-        fallback_generator: Generator fallback for non-YAML callers.
-        fallback_map_behaviors: Map behavior fallback for non-YAML callers.
-        fallback_character_behaviors: Character behavior fallback for non-YAML callers.
-        fallback_recovery_behaviors: Recovery behavior fallback for non-YAML callers.
-        fallback_map_size: Map size fallback from caller context.
-        fallback_ring_inner_radius: Ring inner radius fallback from caller context.
-        fallback_ring_outer_radius: Ring outer radius fallback from caller context.
-        fallback_box_inner_size: Box size fallback from caller context.
-        fallback_perimeter_tree_prob: Perimeter probability fallback from caller context.
-
-    Returns:
-        A validated and normalized ``WorldPresetSpec``.
-    """
-    normalized_fallback_env = normalize_craftax_env_name(fallback_env_name)
-    extends_value = config_data.get("extends")
-    inherited: Optional[WorldPresetSpec] = None
-    if extends_value is not None:
-        if not isinstance(extends_value, str) or not extends_value.strip():
-            raise TypeError(f"World preset {preset_name}: 'extends' must be a non-empty string")
-        inherited = build_world_preset_spec(
-            env_name=fallback_env_name,
-            preset_name=extends_value,
-            seed=fallback_seed,
-            env={
-                "map_size": fallback_map_size,
-            },
-            map={
-                "generator": fallback_generator,
-                "behaviors": fallback_map_behaviors,
-                "ring_inner_radius": fallback_ring_inner_radius,
-                "ring_outer_radius": fallback_ring_outer_radius,
-                "box_inner_size": fallback_box_inner_size,
-                "perimeter_tree_prob": fallback_perimeter_tree_prob,
-            },
-            character={
-                "behaviors": fallback_character_behaviors,
-            },
-            recovery={
-                "behaviors": fallback_recovery_behaviors,
-            },
-            allow_config_lookup=True,
-        )
-
-    preset_kind = config_data.get("preset")
-    if preset_kind is None and inherited is not None:
-        preset_kind = inherited.name
-    if preset_kind is None:
-        preset_kind = "default"
-    if not isinstance(preset_kind, str):
-        raise TypeError(f"World preset {preset_name}: 'preset' must be a string")
-
-    declared_env_value = config_data.get("env_name", config_data.get("base_environment"))
-    if declared_env_value is None and inherited is not None:
-        declared_env_value = inherited.env_name
-    if declared_env_value is not None and not isinstance(declared_env_value, str):
-        raise TypeError(f"World preset {preset_name}: 'env_name' must be a string")
-    if declared_env_value is not None:
-        normalized_declared_env = normalize_craftax_env_name(declared_env_value)
-        if normalized_declared_env != normalized_fallback_env:
-            raise ValueError(
-                f"World preset {preset_name} expects env_name={normalized_declared_env}, "
-                f"but the active env is {normalized_fallback_env}. "
-                "Presets only overlay the selected base environment and do not override it."
-            )
-    env_value = normalized_fallback_env
-
-    seed_value = config_data.get("seed", inherited.seed if inherited is not None else fallback_seed)
-    if seed_value is not None and not isinstance(seed_value, int):
-        raise TypeError(f"World preset {preset_name}: 'seed' must be int")
-
-    generator_value = config_data.get(
-        "generator",
-        inherited.generator if inherited is not None else None,
-    )
-    map_behaviors_value = config_data.get(
-        "map_behaviors",
-        list(inherited.map_behaviors) if inherited is not None and inherited.map_behaviors else None,
-    )
-    character_behaviors_value = config_data.get(
-        "character_behaviors",
-        list(inherited.character_behaviors)
-        if inherited is not None and inherited.character_behaviors
-        else None,
-    )
-    recovery_behaviors_value = config_data.get(
-        "recovery_behaviors",
-        list(inherited.recovery_behaviors)
-        if inherited is not None and inherited.recovery_behaviors
-        else None,
-    )
-    map_size_value = config_data.get("map_size", inherited.map_size if inherited is not None else fallback_map_size)
-    blocked_block_value = config_data.get("blocked_block", inherited.blocked_block if inherited is not None else None)
-    floor_block_value = config_data.get("floor_block", inherited.floor_block if inherited is not None else None)
-    perimeter_block_value = config_data.get(
-        "perimeter_block",
-        inherited.perimeter_block if inherited is not None else None,
-    )
-    disable_mob_spawns_value = config_data.get(
-        "disable_mob_spawns",
-        inherited.disable_mob_spawns if inherited is not None else None,
-    )
-    starting_inventory_value = config_data.get(
-        "starting_inventory",
-        {grant.item: {"value": grant.value, "probability": grant.probability} for grant in inherited.starting_inventory}
-        if inherited is not None and inherited.starting_inventory
-        else None,
-    )
-    starting_intrinsics_value = config_data.get(
-        "starting_intrinsics",
-        {grant.item: {"value": grant.value, "probability": grant.probability} for grant in inherited.starting_intrinsics}
-        if inherited is not None and inherited.starting_intrinsics
-        else None,
-    )
-    intrinsic_rates_value = config_data.get(
-        "intrinsic_rates",
-        {grant.item: {"value": grant.value, "probability": grant.probability} for grant in inherited.intrinsic_rates}
-        if inherited is not None and inherited.intrinsic_rates
-        else None,
-    )
-    intrinsic_thresholds_value = config_data.get(
-        "intrinsic_thresholds",
-        {grant.item: {"value": grant.value, "probability": grant.probability} for grant in inherited.intrinsic_thresholds}
-        if inherited is not None and inherited.intrinsic_thresholds
-        else None,
-    )
-    recovery_rules_value = config_data.get(
-        "recovery_rules",
-        {grant.item: {"value": grant.value, "probability": grant.probability} for grant in inherited.recovery_rules}
-        if inherited is not None and inherited.recovery_rules
-        else None,
-    )
-    map_rules_value = config_data.get(
-        "map_rules",
-        {grant.item: {"value": grant.value, "probability": grant.probability} for grant in inherited.map_rules}
-        if inherited is not None and inherited.map_rules
-        else None,
-    )
-    ring_inner_value = config_data.get(
-        "ring_inner_radius",
-        inherited.ring_inner_radius if inherited is not None else fallback_ring_inner_radius,
-    )
-    ring_outer_value = config_data.get(
-        "ring_outer_radius",
-        inherited.ring_outer_radius if inherited is not None else fallback_ring_outer_radius,
-    )
-    box_inner_value = config_data.get(
-        "box_inner_size",
-        inherited.box_inner_size if inherited is not None else fallback_box_inner_size,
-    )
-    perimeter_tree_prob_value = config_data.get(
-        "perimeter_tree_prob",
-        inherited.perimeter_tree_prob if inherited is not None else fallback_perimeter_tree_prob,
-    )
-
-    normalized_map_behaviors = _normalize_name_list(map_behaviors_value, field_name="map_behaviors")
-    normalized_character_behaviors = _normalize_name_list(
-        character_behaviors_value,
-        field_name="character_behaviors",
-    )
-    normalized_recovery_behaviors = _normalize_name_list(
-        recovery_behaviors_value,
-        field_name="recovery_behaviors",
-    )
-    normalized_generator = None if generator_value is None else _derive_generator_name(
-        explicit_generator=str(generator_value),
-        normalized_preset="default",
-    )
-
-    _validate_explicit_config_api(
-        preset_name=preset_name,
-        generator=normalized_generator,
-        map_behaviors=normalized_map_behaviors,
-        character_behaviors=normalized_character_behaviors,
-        recovery_behaviors=normalized_recovery_behaviors,
-        ring_inner_radius=ring_inner_value,
-        ring_outer_radius=ring_outer_value,
-        box_inner_size=box_inner_value,
-        perimeter_tree_prob=perimeter_tree_prob_value,
-        starting_inventory=starting_inventory_value,
-        starting_intrinsics=starting_intrinsics_value,
-        intrinsic_rates=intrinsic_rates_value,
-        intrinsic_thresholds=intrinsic_thresholds_value,
-        recovery_rules=recovery_rules_value,
-        map_rules=map_rules_value,
-    )
-
-    return build_world_preset_spec(
-        env_name=env_value,
-        preset_name=str(preset_kind),
-        seed=seed_value,
-        env={
-            "map_size": map_size_value,
-            "disable_mob_spawns": disable_mob_spawns_value,
-        },
-        map={
-            "generator": normalized_generator,
-            "behaviors": normalized_map_behaviors,
-            "blocked_block": blocked_block_value,
-            "floor_block": floor_block_value,
-            "perimeter_block": perimeter_block_value,
-            "rules": map_rules_value,
-            "ring_inner_radius": ring_inner_value,
-            "ring_outer_radius": ring_outer_value,
-            "box_inner_size": box_inner_value,
-            "perimeter_tree_prob": perimeter_tree_prob_value,
-        },
-        character={
-            "behaviors": normalized_character_behaviors,
-            "starting_inventory": starting_inventory_value,
-            "starting_intrinsics": starting_intrinsics_value,
-            "intrinsic_rates": intrinsic_rates_value,
-            "intrinsic_thresholds": intrinsic_thresholds_value,
-        },
-        recovery={
-            "behaviors": normalized_recovery_behaviors,
-            "rules": recovery_rules_value,
-        },
-        allow_config_lookup=False,
-        derive_behavior_defaults=False,
+    return _assemble_world_preset_spec(
+        preset_name=requested_name or "inline",
+        default_env_name=env_name,
+        default_seed=seed,
+        env_section=env_section,
+        map_section=resolved_sections["map"],
+        systems_section=resolved_sections["systems"],
     )
 
 
@@ -963,6 +688,80 @@ def _build_static_env_params(env_name: str, map_size: Optional[Tuple[int, int]])
         from craftax.craftax.craftax_state import StaticEnvParams
 
     return StaticEnvParams(map_size=map_size)
+
+
+def _build_static_env_instance(env_name: str, static_env_params: Any, *, auto_reset: bool) -> Any:
+    if env_name == "Craftax-Classic-Pixels-v1":
+        from craftax.craftax_classic.envs.craftax_pixels_env import (
+            CraftaxClassicPixelsEnv,
+            CraftaxClassicPixelsEnvNoAutoReset,
+        )
+
+        return CraftaxClassicPixelsEnv(static_env_params) if auto_reset else CraftaxClassicPixelsEnvNoAutoReset(static_env_params)
+    if env_name == "Craftax-Classic-Symbolic-v1":
+        from craftax.craftax_classic.envs.craftax_symbolic_env import (
+            CraftaxClassicSymbolicEnv,
+            CraftaxClassicSymbolicEnvNoAutoReset,
+        )
+
+        return (
+            CraftaxClassicSymbolicEnv(static_env_params)
+            if auto_reset
+            else CraftaxClassicSymbolicEnvNoAutoReset(static_env_params)
+        )
+    if env_name == "Craftax-Pixels-v1":
+        from craftax.craftax.envs.craftax_pixels_env import CraftaxPixelsEnv, CraftaxPixelsEnvNoAutoReset
+
+        return CraftaxPixelsEnv(static_env_params) if auto_reset else CraftaxPixelsEnvNoAutoReset(static_env_params)
+    if env_name == "Craftax-Symbolic-v1":
+        from craftax.craftax.envs.craftax_symbolic_env import CraftaxSymbolicEnv, CraftaxSymbolicEnvNoAutoReset
+
+        return CraftaxSymbolicEnv(static_env_params) if auto_reset else CraftaxSymbolicEnvNoAutoReset(static_env_params)
+    raise ValueError(f"Unsupported Craftax environment for world preset: {env_name}")
+
+
+def _build_env(spec: WorldPresetSpec, *, auto_reset: bool) -> Any:
+    static_env_params = _build_static_env_params(spec.env.env_name, spec.systems.static_env.map_size)
+    if static_env_params is None:
+        return make_craftax_env_from_name(spec.env.env_name, auto_reset=auto_reset)
+    return _build_static_env_instance(spec.env.env_name, static_env_params, auto_reset=auto_reset)
+
+
+def _spawn_disable_overrides(env_params: Any) -> dict[str, Any]:
+    replace_kwargs = {"mob_despawn_distance": 0}
+    if hasattr(env_params, "spawn_cow_chance"):
+        replace_kwargs["spawn_cow_chance"] = 0.0
+    if hasattr(env_params, "spawn_zombie_base_chance"):
+        replace_kwargs["spawn_zombie_base_chance"] = 0.0
+    if hasattr(env_params, "spawn_zombie_night_chance"):
+        replace_kwargs["spawn_zombie_night_chance"] = 0.0
+    if hasattr(env_params, "spawn_skeleton_chance"):
+        replace_kwargs["spawn_skeleton_chance"] = 0.0
+    return replace_kwargs
+
+
+def _apply_env_params_overrides(env_params: Any, spec: WorldPresetSpec) -> Any:
+    replace_kwargs: dict[str, Any] = {}
+    if spec.systems.spawn.disable_mob_spawns:
+        replace_kwargs.update(_spawn_disable_overrides(env_params))
+    for override in spec.systems.env_params.overrides:
+        if not hasattr(env_params, override.item):
+            raise ValueError(
+                f"World preset env_params override {override.item!r} does not exist for env {spec.env.env_name}"
+            )
+        replace_kwargs[override.item] = override.value
+    return env_params.replace(**replace_kwargs) if replace_kwargs else env_params
+
+
+def _uses_runtime_pipeline(spec: WorldPresetSpec) -> bool:
+    return any(
+        (
+            spec.map.generator_name is not None,
+            bool(spec.systems.movement.behaviors),
+            bool(spec.systems.reset.behaviors),
+            bool(spec.systems.step.behaviors),
+        )
+    )
 
 
 def build_env_and_params(
@@ -981,49 +780,9 @@ def build_env_and_params(
     Returns:
         A tuple of ``(env, env_params)`` ready for reset/step calls.
     """
-    static_env_params = _build_static_env_params(spec.env.env_name, spec.env.map_size)
-
-    if static_env_params is None:
-        env = make_craftax_env_from_name(spec.env.env_name, auto_reset=auto_reset)
-    elif spec.env.env_name == "Craftax-Classic-Pixels-v1":
-        from craftax.craftax_classic.envs.craftax_pixels_env import (
-            CraftaxClassicPixelsEnv,
-            CraftaxClassicPixelsEnvNoAutoReset,
-        )
-        env = CraftaxClassicPixelsEnv(static_env_params) if auto_reset else CraftaxClassicPixelsEnvNoAutoReset(static_env_params)
-    elif spec.env.env_name == "Craftax-Classic-Symbolic-v1":
-        from craftax.craftax_classic.envs.craftax_symbolic_env import (
-            CraftaxClassicSymbolicEnv,
-            CraftaxClassicSymbolicEnvNoAutoReset,
-        )
-        env = (
-            CraftaxClassicSymbolicEnv(static_env_params)
-            if auto_reset
-            else CraftaxClassicSymbolicEnvNoAutoReset(static_env_params)
-        )
-    elif spec.env.env_name == "Craftax-Pixels-v1":
-        from craftax.craftax.envs.craftax_pixels_env import CraftaxPixelsEnv, CraftaxPixelsEnvNoAutoReset
-        env = CraftaxPixelsEnv(static_env_params) if auto_reset else CraftaxPixelsEnvNoAutoReset(static_env_params)
-    elif spec.env.env_name == "Craftax-Symbolic-v1":
-        from craftax.craftax.envs.craftax_symbolic_env import CraftaxSymbolicEnv, CraftaxSymbolicEnvNoAutoReset
-        env = CraftaxSymbolicEnv(static_env_params) if auto_reset else CraftaxSymbolicEnvNoAutoReset(static_env_params)
-    else:
-        raise ValueError(f"Unsupported Craftax environment for world preset: {spec.env.env_name}")
-
-    env_params = env.default_params
-    if spec.env.disable_mob_spawns:
-        replace_kwargs = {"mob_despawn_distance": 0}
-        if hasattr(env_params, "spawn_cow_chance"):
-            replace_kwargs["spawn_cow_chance"] = 0.0
-        if hasattr(env_params, "spawn_zombie_base_chance"):
-            replace_kwargs["spawn_zombie_base_chance"] = 0.0
-        if hasattr(env_params, "spawn_zombie_night_chance"):
-            replace_kwargs["spawn_zombie_night_chance"] = 0.0
-        if hasattr(env_params, "spawn_skeleton_chance"):
-            replace_kwargs["spawn_skeleton_chance"] = 0.0
-        env_params = env_params.replace(**replace_kwargs)
-
-    if spec.uses_map_adapter or spec.uses_character_adapter or spec.uses_recovery_adapter:
+    env = _build_env(spec, auto_reset=auto_reset)
+    env_params = _apply_env_params_overrides(env.default_params, spec)
+    if _uses_runtime_pipeline(spec):
         runtime_adapter_cls = CompositePresetAdapter if adapter_cls is None else adapter_cls
         env = runtime_adapter_cls(env, spec)
 
@@ -1212,10 +971,6 @@ class BaseWorldGenerator:
         self.spec = spec
         self.resolved_family = resolved_family
 
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return False
-
     def apply(self, state: Any, key: Any) -> GeneratedWorldState:
         raise NotImplementedError
 
@@ -1223,25 +978,24 @@ class BaseWorldGenerator:
 class BoxWorldGenerator(BaseWorldGenerator):
     generator_name = "box"
 
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return spec.has_box
-
     def apply(self, state: Any, key: Any) -> GeneratedWorldState:
+        if not isinstance(self.spec.map.generator_config, BoxGeneratorSpec):
+            raise TypeError("BoxWorldGenerator requires BoxGeneratorSpec")
+        config = self.spec.map.generator_config
         if self.resolved_family == "classic":
             from craftax.craftax_classic.constants import BlockType
 
-            blocked_value = _resolve_classic_block_value(self.spec.map.blocked_block, BlockType.OUT_OF_BOUNDS.value)
-            floor_value = _resolve_classic_block_value(self.spec.map.floor_block, BlockType.GRASS.value)
-            perimeter_value = _resolve_classic_block_value(self.spec.map.perimeter_block, BlockType.TREE.value)
+            blocked_value = _resolve_classic_block_value(config.blocked_block, BlockType.OUT_OF_BOUNDS.value)
+            floor_value = _resolve_classic_block_value(config.floor_block, BlockType.GRASS.value)
+            perimeter_value = _resolve_classic_block_value(config.perimeter_block, BlockType.TREE.value)
             updated_map, spawn_position = _apply_box_to_level(
                 state.map,
                 key=key,
                 blocked_value=blocked_value,
                 floor_value=floor_value,
                 tree_value=perimeter_value,
-                inner_size=int(self.spec.map.box_inner_size),
-                perimeter_tree_prob=float(self.spec.map.perimeter_tree_prob or 0.7),
+                inner_size=int(config.inner_size),
+                perimeter_tree_prob=float(config.perimeter_tree_prob or 0.7),
             )
             return GeneratedWorldState(map=updated_map, player_position=spawn_position)
 
@@ -1251,17 +1005,17 @@ class BoxWorldGenerator(BaseWorldGenerator):
         current_map = state.map[current_level]
         default_floor_value = BlockType.GRASS.value if current_level == 0 else BlockType.PATH.value
         default_perimeter_value = BlockType.TREE.value if current_level == 0 else BlockType.WALL.value
-        blocked_value = _resolve_full_block_value(self.spec.map.blocked_block, BlockType.OUT_OF_BOUNDS.value)
-        floor_value = _resolve_full_block_value(self.spec.map.floor_block, default_floor_value)
-        perimeter_value = _resolve_full_block_value(self.spec.map.perimeter_block, default_perimeter_value)
+        blocked_value = _resolve_full_block_value(config.blocked_block, BlockType.OUT_OF_BOUNDS.value)
+        floor_value = _resolve_full_block_value(config.floor_block, default_floor_value)
+        perimeter_value = _resolve_full_block_value(config.perimeter_block, default_perimeter_value)
         updated_level_map, spawn_position = _apply_box_to_level(
             current_map,
             key=key,
             blocked_value=blocked_value,
             floor_value=floor_value,
             tree_value=perimeter_value,
-            inner_size=int(self.spec.map.box_inner_size),
-            perimeter_tree_prob=float(self.spec.map.perimeter_tree_prob or 0.7),
+            inner_size=int(config.inner_size),
+            perimeter_tree_prob=float(config.perimeter_tree_prob or 0.7),
         )
         updated_light_level = jnp.where(
             updated_level_map == BlockType.OUT_OF_BOUNDS.value,
@@ -1280,23 +1034,22 @@ class BoxWorldGenerator(BaseWorldGenerator):
 class RingWorldGenerator(BaseWorldGenerator):
     generator_name = "ring"
 
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return spec.has_ring
-
     def apply(self, state: Any, key: Any) -> GeneratedWorldState:
+        if not isinstance(self.spec.map.generator_config, RingGeneratorSpec):
+            raise TypeError("RingWorldGenerator requires RingGeneratorSpec")
+        config = self.spec.map.generator_config
         if self.resolved_family == "classic":
             from craftax.craftax_classic.constants import BlockType
 
-            blocked_value = _resolve_classic_block_value(self.spec.map.blocked_block, BlockType.WATER.value)
-            floor_value = _resolve_classic_block_value(self.spec.map.floor_block, BlockType.GRASS.value)
+            blocked_value = _resolve_classic_block_value(config.blocked_block, BlockType.WATER.value)
+            floor_value = _resolve_classic_block_value(config.floor_block, BlockType.GRASS.value)
             updated_map, spawn_position = _apply_ring_to_level(
                 state.map,
                 player_position=state.player_position,
                 blocked_value=blocked_value,
                 spawn_value=floor_value,
-                inner_radius=int(self.spec.map.ring_inner_radius or 0),
-                outer_radius=int(self.spec.map.ring_outer_radius),
+                inner_radius=int(config.inner_radius),
+                outer_radius=int(config.outer_radius),
             )
             return GeneratedWorldState(map=updated_map, player_position=spawn_position)
 
@@ -1305,11 +1058,11 @@ class RingWorldGenerator(BaseWorldGenerator):
         current_level = int(state.player_level)
         current_map = state.map[current_level]
         blocked_value = _resolve_full_block_value(
-            self.spec.map.blocked_block,
+            config.blocked_block,
             BlockType.WATER.value if current_level == 0 else BlockType.WALL.value,
         )
         floor_value = _resolve_full_block_value(
-            self.spec.map.floor_block,
+            config.floor_block,
             BlockType.GRASS.value if current_level == 0 else BlockType.PATH.value,
         )
         updated_level_map, spawn_position = _apply_ring_to_level(
@@ -1317,16 +1070,16 @@ class RingWorldGenerator(BaseWorldGenerator):
             player_position=state.player_position,
             blocked_value=blocked_value,
             spawn_value=floor_value,
-            inner_radius=int(self.spec.map.ring_inner_radius or 0),
-            outer_radius=int(self.spec.map.ring_outer_radius),
+            inner_radius=int(config.inner_radius),
+            outer_radius=int(config.outer_radius),
         )
         ring_mask = _distance_mask(
             current_map.shape[0],
             current_map.shape[1],
             current_map.shape[0] // 2,
             current_map.shape[1] // 2,
-            int(self.spec.map.ring_inner_radius or 0),
-            int(self.spec.map.ring_outer_radius),
+            int(config.inner_radius),
+            int(config.outer_radius),
         )
         return GeneratedWorldState(
             map=state.map.at[current_level].set(updated_level_map),
@@ -1341,29 +1094,26 @@ class RingWorldGenerator(BaseWorldGenerator):
         )
 
 
-WORLD_GENERATOR_REGISTRY: dict[str, type[BaseWorldGenerator]] = {
-    BoxWorldGenerator.generator_name: BoxWorldGenerator,
-    RingWorldGenerator.generator_name: RingWorldGenerator,
-}
+WORLD_GENERATOR_REGISTRY: dict[str, type[BaseWorldGenerator]] = _registry_from_named_types(
+    BoxWorldGenerator,
+    RingWorldGenerator,
+    name_attr="generator_name",
+)
 
 
-class BaseMapBehavior:
-    """Extension point for map-related policies such as collision rules.
+class BaseMovementBehavior:
+    """Extension point for movement and collision policies.
 
-    Map behaviors run in the preset pipeline after generation and may adjust
-    reset state or post-step state while remaining independent from generation.
+    Movement behaviors run after generation and may adjust reset or step-time
+    state while remaining independent from the map generator itself.
     """
 
-    behavior_name = "base_map"
+    behavior_name = "base_movement"
 
     def __init__(self, spec: WorldPresetSpec, resolved_family: str) -> None:
         self.spec = spec
         self.resolved_family = resolved_family
-        self.rules = _grants_to_mapping(spec.map.rules)
-
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return False
+        self.rules = _grants_to_mapping(spec.systems.movement.rules)
 
     def apply_reset(self, state: Any, key: Any) -> Any:
         return state
@@ -1372,16 +1122,12 @@ class BaseMapBehavior:
         return new_state
 
 
-class SolidBlocksBehavior(BaseMapBehavior):
+class SolidBlocksBehavior(BaseMovementBehavior):
     behavior_name = "solid_blocks"
 
     def __init__(self, spec: WorldPresetSpec, resolved_family: str) -> None:
         super().__init__(spec, resolved_family)
         self.solid_block_values = self._resolve_solid_block_values()
-
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return bool(spec.map.rules)
 
     def apply_step(self, previous_state: Any, new_state: Any) -> Any:
         if not self.solid_block_values:
@@ -1418,78 +1164,76 @@ class SolidBlocksBehavior(BaseMapBehavior):
         return solid_values
 
 
-MAP_BEHAVIOR_REGISTRY: dict[str, type[BaseMapBehavior]] = {
-    SolidBlocksBehavior.behavior_name: SolidBlocksBehavior,
-}
+MOVEMENT_BEHAVIOR_REGISTRY: dict[str, type[BaseMovementBehavior]] = _registry_from_named_types(
+    SolidBlocksBehavior,
+    name_attr="behavior_name",
+)
 
 
-class BaseCharacterBehavior:
-    """Extension point for character state overrides and dynamics.
+class BaseResetBehavior:
+    """Extension point for reset-time state initialization."""
 
-    Character behaviors may patch reset state, step-time dynamics, or both.
-    """
-
-    behavior_name = "base_character"
+    behavior_name = "base_reset"
 
     def __init__(self, spec: WorldPresetSpec) -> None:
         self.spec = spec
 
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return False
-
     def apply_reset(self, state: Any, key: Any) -> Any:
         return state
 
-    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
-        return new_state
 
-
-class StartingInventoryBehavior(BaseCharacterBehavior):
+class StartingInventoryBehavior(BaseResetBehavior):
     behavior_name = "starting_inventory"
-
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return bool(spec.character.starting_inventory)
 
     def apply_reset(self, state: Any, key: Any) -> Any:
         inventory = _apply_grants_to_record(
             record=state.inventory,
-            grants=self.spec.character.starting_inventory,
+            grants=self.spec.systems.reset.starting_inventory,
             key=key,
             context_name=f"inventory for env {self.spec.env.env_name}",
         )
         return state.replace(inventory=inventory)
 
 
-class StartingIntrinsicsBehavior(BaseCharacterBehavior):
+class StartingIntrinsicsBehavior(BaseResetBehavior):
     behavior_name = "starting_intrinsics"
-
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return bool(spec.character.starting_intrinsics)
 
     def apply_reset(self, state: Any, key: Any) -> Any:
         return _apply_state_grants_to_state(
             state=state,
-            grants=self.spec.character.starting_intrinsics,
+            grants=self.spec.systems.reset.starting_intrinsics,
             key=key,
             label="starting_intrinsics",
             env_name=self.spec.env.env_name,
         )
 
 
-class IntrinsicDynamicsBehavior(BaseCharacterBehavior):
+RESET_BEHAVIOR_REGISTRY: dict[str, type[BaseResetBehavior]] = _registry_from_named_types(
+    StartingInventoryBehavior,
+    StartingIntrinsicsBehavior,
+    name_attr="behavior_name",
+)
+
+
+class BaseStepBehavior:
+    """Extension point for post-step state dynamics and recovery."""
+
+    behavior_name = "base_step"
+
+    def __init__(self, spec: WorldPresetSpec) -> None:
+        self.spec = spec
+
+    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
+        return new_state
+
+
+class IntrinsicDynamicsBehavior(BaseStepBehavior):
     behavior_name = "intrinsic_dynamics"
 
     def __init__(self, spec: WorldPresetSpec) -> None:
         super().__init__(spec)
-        self.rate_values = _grants_to_mapping(spec.character.intrinsic_rates)
-        self.threshold_values = _grants_to_mapping(spec.character.intrinsic_thresholds)
-
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return bool(spec.character.intrinsic_rates or spec.character.intrinsic_thresholds)
+        self.rate_values = _grants_to_mapping(spec.systems.step.intrinsic_rates)
+        self.threshold_values = _grants_to_mapping(spec.systems.step.intrinsic_thresholds)
 
     def apply_step(self, previous_state: Any, new_state: Any) -> Any:
         state = new_state
@@ -1559,36 +1303,12 @@ class IntrinsicDynamicsBehavior(BaseCharacterBehavior):
         return state.replace(**updates) if updates else state
 
 
-CHARACTER_BEHAVIOR_REGISTRY: dict[str, type[BaseCharacterBehavior]] = {
-    StartingInventoryBehavior.behavior_name: StartingInventoryBehavior,
-    StartingIntrinsicsBehavior.behavior_name: StartingIntrinsicsBehavior,
-    IntrinsicDynamicsBehavior.behavior_name: IntrinsicDynamicsBehavior,
-}
-
-
-class BaseRecoveryBehavior:
-    """Extension point for recovery and sleep/rest overrides."""
-
-    behavior_name = "base_recovery"
-
-    def __init__(self, spec: WorldPresetSpec) -> None:
-        self.spec = spec
-        self.rules = _grants_to_mapping(spec.recovery.rules)
-
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return False
-
-    def apply_step(self, previous_state: Any, new_state: Any) -> Any:
-        return new_state
-
-
-class InstantRecoveryBehavior(BaseRecoveryBehavior):
+class InstantRecoveryBehavior(BaseStepBehavior):
     behavior_name = "instant_recovery"
 
-    @classmethod
-    def matches(cls, spec: WorldPresetSpec) -> bool:
-        return bool(spec.recovery.rules)
+    def __init__(self, spec: WorldPresetSpec) -> None:
+        super().__init__(spec)
+        self.rules = _grants_to_mapping(spec.systems.step.rules)
 
     def apply_step(self, previous_state: Any, new_state: Any) -> Any:
         state = new_state
@@ -1632,9 +1352,36 @@ class InstantRecoveryBehavior(BaseRecoveryBehavior):
             )
 
 
-RECOVERY_BEHAVIOR_REGISTRY: dict[str, type[BaseRecoveryBehavior]] = {
-    InstantRecoveryBehavior.behavior_name: InstantRecoveryBehavior,
-}
+STEP_BEHAVIOR_REGISTRY: dict[str, type[BaseStepBehavior]] = _registry_from_named_types(
+    IntrinsicDynamicsBehavior,
+    InstantRecoveryBehavior,
+    name_attr="behavior_name",
+)
+
+
+def _resolve_registry_entry(
+    registry: Mapping[str, Any],
+    name: str,
+    *,
+    registry_name: str,
+) -> Any:
+    entry = registry.get(name)
+    if entry is None:
+        raise ValueError(f"Unknown {registry_name}: {name}")
+    return entry
+
+
+def _build_components(
+    names: Tuple[str, ...],
+    registry: Mapping[str, type[Any]],
+    factory: Callable[[type[Any]], Any],
+    *,
+    registry_name: str,
+) -> tuple[Any, ...]:
+    return tuple(
+        factory(_resolve_registry_entry(registry, name, registry_name=registry_name))
+        for name in names
+    )
 
 
 class CompositePresetAdapter:
@@ -1653,9 +1400,9 @@ class CompositePresetAdapter:
         self.spec = spec
         self.resolved_family = resolve_base_environment(spec.env.env_name).family
         self.world_generator = self._build_world_generator()
-        self.map_behaviors = self._build_map_behaviors()
-        self.character_behaviors = self._build_character_behaviors()
-        self.recovery_behaviors = self._build_recovery_behaviors()
+        self.movement_behaviors = self._build_movement_behaviors()
+        self.reset_behaviors = self._build_reset_behaviors()
+        self.step_behaviors = self._build_step_behaviors()
         self.reset_transforms = self._build_reset_pipeline()
         self.step_transforms = self._build_step_pipeline()
 
@@ -1682,55 +1429,49 @@ class CompositePresetAdapter:
 
     def _build_reset_pipeline(self) -> tuple[Callable[[Any, Any], Any], ...]:
         transforms: list[Callable[[Any, Any], Any]] = []
-        if self.spec.uses_map_adapter:
+        if self.spec.map.generator_name is not None:
             transforms.append(self._apply_map_overlay)
-        for behavior in self.map_behaviors:
-            if behavior.apply_reset.__func__ is not BaseMapBehavior.apply_reset:
+        for behavior in self.movement_behaviors:
+            if behavior.apply_reset.__func__ is not BaseMovementBehavior.apply_reset:
                 transforms.append(behavior.apply_reset)
-        for behavior in self.character_behaviors:
-            if behavior.apply_reset.__func__ is not BaseCharacterBehavior.apply_reset:
+        for behavior in self.reset_behaviors:
+            if behavior.apply_reset.__func__ is not BaseResetBehavior.apply_reset:
                 transforms.append(behavior.apply_reset)
         return tuple(transforms)
 
     def _build_step_pipeline(self) -> tuple[Callable[[Any, Any], Any], ...]:
         transforms: list[Callable[[Any, Any], Any]] = []
-        for behavior in self.map_behaviors:
-            if behavior.apply_step.__func__ is not BaseMapBehavior.apply_step:
+        for behavior in self.movement_behaviors:
+            if behavior.apply_step.__func__ is not BaseMovementBehavior.apply_step:
                 transforms.append(behavior.apply_step)
-        for behavior in self.character_behaviors:
-            if behavior.apply_step.__func__ is not BaseCharacterBehavior.apply_step:
-                transforms.append(behavior.apply_step)
-        for behavior in self.recovery_behaviors:
-            if behavior.apply_step.__func__ is not BaseRecoveryBehavior.apply_step:
+        for behavior in self.step_behaviors:
+            if behavior.apply_step.__func__ is not BaseStepBehavior.apply_step:
                 transforms.append(behavior.apply_step)
         return tuple(transforms)
 
-    def _build_map_behaviors(self) -> tuple[BaseMapBehavior, ...]:
-        behaviors: list[BaseMapBehavior] = []
-        for behavior_name in self.spec.map.behaviors:
-            behavior_cls = MAP_BEHAVIOR_REGISTRY.get(behavior_name)
-            if behavior_cls is None:
-                raise ValueError(f"Unknown map behavior for world preset: {behavior_name}")
-            behaviors.append(behavior_cls(self.spec, self.resolved_family))
-        return tuple(behaviors)
+    def _build_movement_behaviors(self) -> tuple[BaseMovementBehavior, ...]:
+        return _build_components(
+            self.spec.systems.movement.behaviors,
+            MOVEMENT_BEHAVIOR_REGISTRY,
+            lambda behavior_cls: behavior_cls(self.spec, self.resolved_family),
+            registry_name="movement behavior for world preset",
+        )
 
-    def _build_character_behaviors(self) -> tuple[BaseCharacterBehavior, ...]:
-        behaviors: list[BaseCharacterBehavior] = []
-        for behavior_name in self.spec.character.behaviors:
-            behavior_cls = CHARACTER_BEHAVIOR_REGISTRY.get(behavior_name)
-            if behavior_cls is None:
-                raise ValueError(f"Unknown character behavior for world preset: {behavior_name}")
-            behaviors.append(behavior_cls(self.spec))
-        return tuple(behaviors)
+    def _build_reset_behaviors(self) -> tuple[BaseResetBehavior, ...]:
+        return _build_components(
+            self.spec.systems.reset.behaviors,
+            RESET_BEHAVIOR_REGISTRY,
+            lambda behavior_cls: behavior_cls(self.spec),
+            registry_name="reset behavior for world preset",
+        )
 
-    def _build_recovery_behaviors(self) -> tuple[BaseRecoveryBehavior, ...]:
-        behaviors: list[BaseRecoveryBehavior] = []
-        for behavior_name in self.spec.recovery.behaviors:
-            behavior_cls = RECOVERY_BEHAVIOR_REGISTRY.get(behavior_name)
-            if behavior_cls is None:
-                raise ValueError(f"Unknown recovery behavior for world preset: {behavior_name}")
-            behaviors.append(behavior_cls(self.spec))
-        return tuple(behaviors)
+    def _build_step_behaviors(self) -> tuple[BaseStepBehavior, ...]:
+        return _build_components(
+            self.spec.systems.step.behaviors,
+            STEP_BEHAVIOR_REGISTRY,
+            lambda behavior_cls: behavior_cls(self.spec),
+            registry_name="step behavior for world preset",
+        )
 
     def _apply_map_overlay(self, state: Any, key: Any):
         if self.world_generator is None:
@@ -1749,9 +1490,11 @@ class CompositePresetAdapter:
         return state.replace(**updates)
 
     def _build_world_generator(self) -> Optional[BaseWorldGenerator]:
-        if self.spec.map.generator is None:
+        if self.spec.map.generator_name is None:
             return None
-        generator_cls = WORLD_GENERATOR_REGISTRY.get(self.spec.map.generator)
-        if generator_cls is None:
-            raise ValueError(f"Unknown world generator for preset: {self.spec.map.generator}")
+        generator_cls = _resolve_registry_entry(
+            WORLD_GENERATOR_REGISTRY,
+            self.spec.map.generator_name,
+            registry_name="world generator for preset",
+        )
         return generator_cls(self.spec, self.resolved_family)
